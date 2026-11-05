@@ -1,0 +1,8 @@
+/build*/
+/downloads/
+/artifacts/
+/dist/
+__pycache__/
+*.pyc
+*.user
+*.pdb

@@ -1,0 +1,9 @@
+{
+  "source_sha256": "cf403cf9d3e465e05298c8e6082f4d664c32140ebcc4696a64200e367abb530d",
+  "source_kind": "real client application command captured by native SNS listener",
+  "source_file": "artifacts/steam/serve-03/1799613-rx.bin",
+  "wire_sha256": "687e217d71846ece04f7b934786cea7c3492f114ce68d6333ca4170e6329a92c",
+  "plaintext_sha256": "490acbe2af07e3a2362b70327233507e5ae5364d2e249c5f118c667a722c8069",
+  "transformation": "retain ID byte; raw LZ4 decode of remaining bytes",
+  "scope": "109-byte packed BuildShape request; no full gameplay response validation"
+}

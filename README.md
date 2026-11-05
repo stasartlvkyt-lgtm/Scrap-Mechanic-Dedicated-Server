@@ -150,4 +150,3 @@ sent a 41,255-byte join packet (message id 6). The next gate is the server's
 initial world synchronization response, followed by world BLOB decoding,
 collision geometry and original-physics parity. Implemented research tools
 support those gates; they do not replace them.
-

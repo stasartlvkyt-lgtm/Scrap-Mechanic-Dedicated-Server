@@ -1,0 +1,347 @@
+[
+  {
+    "file": "User_<LOCAL_STEAM_USER>\\Save\\11312312.db",
+    "sha256": "83bb6e4b56660b3da5cd1d575dc61e74dffef4f63519a7e132c7a937173623b1",
+    "game": [
+      30,
+      1,
+      1064798589,
+      2475375
+    ],
+    "bodies": {
+      "total": 25,
+      "minimum_55_bytes": 25,
+      "id_BE_at_3_matches": 25,
+      "world_BE_at_7_matches": 25,
+      "bounds_exact_match": 25
+    },
+    "body_variants": {
+      "000101:60": 9,
+      "000201:80": 16
+    },
+    "quaternion_norm_squared_range": [
+      0.9999999173513858,
+      1.0000000915915879
+    ],
+    "child_shapes": {
+      "total": 448,
+      "id_BE_at_3_matches": 448,
+      "body_BE_at_7_matches": 448,
+      "body_BE_at_27_matches": 448
+    },
+    "child_examples": [
+      {
+        "id": 428,
+        "bodyId": 696,
+        "bytes": 48,
+        "prefix": "011f01000001ac000002b810884e44c1b26e88864c43239c5981e2000002b8004efffbfffcffdcd7c900010010000400"
+      },
+      {
+        "id": 702,
+        "bodyId": 696,
+        "bytes": 48,
+        "prefix": "011f01000002be000002b810884e44c1b26e88864c43239c5981e2000002b80041ffefffffffdcd7c900010001000500"
+      }
+    ]
+  },
+  {
+    "file": "User_<LOCAL_STEAM_USER>\\Save\\123123123.db",
+    "sha256": "b5b8909e17c76782539b71899149c3b9d025b4ec428bde5a9202d6e21ebd1857",
+    "game": [
+      28,
+      1,
+      750670120,
+      518649
+    ],
+    "bodies": {
+      "total": 237,
+      "minimum_55_bytes": 237,
+      "id_BE_at_3_matches": 237,
+      "world_BE_at_7_matches": 237,
+      "bounds_exact_match": 237
+    },
+    "body_variants": {
+      "000101:60": 15,
+      "000201:80": 222
+    },
+    "quaternion_norm_squared_range": [
+      0.9999996988495983,
+      1.0000003412846592
+    ],
+    "child_shapes": {
+      "total": 1880,
+      "id_BE_at_3_matches": 1880,
+      "body_BE_at_7_matches": 1880,
+      "body_BE_at_27_matches": 1880
+    },
+    "child_examples": [
+      {
+        "id": 24,
+        "bodyId": 24,
+        "bytes": 48,
+        "prefix": "011f01000000180000001810884e44c1b26e88864c43239c5981e200000018fff800040000ffdcd7c900010001000300"
+      },
+      {
+        "id": 25,
+        "bodyId": 24,
+        "bytes": 48,
+        "prefix": "011f01000000190000001810884e44c1b26e88864c43239c5981e200000018fff8fff70002ffdcd7c90001000d000100"
+      }
+    ]
+  },
+  {
+    "file": "User_<LOCAL_STEAM_USER>\\Save\\12313.db",
+    "sha256": "3a1a3e0e4ade0e6918d6acc7093812b5a308bfb090f98023a08ef9d6d20479fb",
+    "game": [
+      28,
+      1,
+      991635919,
+      12636
+    ],
+    "bodies": {
+      "total": 1,
+      "minimum_55_bytes": 1,
+      "id_BE_at_3_matches": 1,
+      "world_BE_at_7_matches": 1,
+      "bounds_exact_match": 1
+    },
+    "body_variants": {
+      "000101:60": 1
+    },
+    "quaternion_norm_squared_range": [
+      1.0,
+      1.0
+    ],
+    "child_shapes": {
+      "total": 1,
+      "id_BE_at_3_matches": 1,
+      "body_BE_at_7_matches": 1,
+      "body_BE_at_27_matches": 1
+    },
+    "child_examples": [
+      {
+        "id": 6,
+        "bodyId": 6,
+        "bytes": 43,
+        "prefix": "012001000000060000000632ac9c232d45c5a7ed4daf9afd3f5c4c00000006000c00000000ffff5c032500"
+      }
+    ]
+  },
+  {
+    "file": "User_<LOCAL_STEAM_USER>\\Save\\12313_upgrade.db",
+    "sha256": "6d7a6e0e3700cc04d10003b2e731ac9963c779fb1d37ec952d60dee63f8f0d21",
+    "game": [
+      28,
+      1,
+      991635919,
+      38785
+    ],
+    "bodies": {
+      "total": 1,
+      "minimum_55_bytes": 1,
+      "id_BE_at_3_matches": 1,
+      "world_BE_at_7_matches": 1,
+      "bounds_exact_match": 1
+    },
+    "body_variants": {
+      "000101:60": 1
+    },
+    "quaternion_norm_squared_range": [
+      1.0,
+      1.0
+    ],
+    "child_shapes": {
+      "total": 4,
+      "id_BE_at_3_matches": 4,
+      "body_BE_at_7_matches": 4,
+      "body_BE_at_27_matches": 4
+    },
+    "child_examples": [
+      {
+        "id": 8,
+        "bodyId": 8,
+        "bytes": 48,
+        "prefix": "011f01000000080000000846dfa54593294ab93a439da3a5dedfc0000000080005fff90000ffaca58800010001000800"
+      },
+      {
+        "id": 9,
+        "bodyId": 8,
+        "bytes": 48,
+        "prefix": "011f01000000090000000846dfa54593294ab93a439da3a5dedfc000000008fffefff90007ffaca58800070001000100"
+      }
+    ]
+  },
+  {
+    "file": "User_<LOCAL_STEAM_USER>\\Save\\Backup\\11312312_2026-11-01_21-51-37.db",
+    "sha256": "cb2957d7be9e9a7078a86de5f5b021641cbf5fe22c7043ec469e772d297859ca",
+    "game": [
+      29,
+      1,
+      1064798589,
+      2457414
+    ],
+    "bodies": {
+      "total": 25,
+      "minimum_55_bytes": 25,
+      "id_BE_at_3_matches": 25,
+      "world_BE_at_7_matches": 25,
+      "bounds_exact_match": 25
+    },
+    "body_variants": {
+      "000101:60": 9,
+      "000201:80": 16
+    },
+    "quaternion_norm_squared_range": [
+      0.9999999222158912,
+      1.0000000625926522
+    ],
+    "child_shapes": {
+      "total": 448,
+      "id_BE_at_3_matches": 448,
+      "body_BE_at_7_matches": 448,
+      "body_BE_at_27_matches": 448
+    },
+    "child_examples": [
+      {
+        "id": 428,
+        "bodyId": 696,
+        "bytes": 48,
+        "prefix": "011f01000001ac000002b810884e44c1b26e88864c43239c5981e2000002b8004efffbfffcffdcd7c900010010000400"
+      },
+      {
+        "id": 702,
+        "bodyId": 696,
+        "bytes": 48,
+        "prefix": "011f01000002be000002b810884e44c1b26e88864c43239c5981e2000002b80041ffefffffffdcd7c900010001000500"
+      }
+    ]
+  },
+  {
+    "file": "User_<LOCAL_STEAM_USER>\\Save\\Backup\\12313_2026-07-28_23-03-32.db",
+    "sha256": "3b2af9a484796ea1d0b8af98a08fcbcc5b5a960c90e34fff725f407177aa0fc4",
+    "game": [
+      27,
+      1,
+      991635919,
+      12636
+    ],
+    "bodies": {
+      "total": 1,
+      "minimum_55_bytes": 1,
+      "id_BE_at_3_matches": 1,
+      "world_BE_at_7_matches": 1,
+      "bounds_exact_match": 1
+    },
+    "body_variants": {
+      "000101:60": 1
+    },
+    "quaternion_norm_squared_range": [
+      1.0,
+      1.0
+    ],
+    "child_shapes": {
+      "total": 1,
+      "id_BE_at_3_matches": 1,
+      "body_BE_at_7_matches": 1,
+      "body_BE_at_27_matches": 1
+    },
+    "child_examples": [
+      {
+        "id": 6,
+        "bodyId": 6,
+        "bytes": 42,
+        "prefix": "012001000000060000000632ac9c232d45c5a7ed4daf9afd3f5c4c00000006000c00000000ffff5c0325"
+      }
+    ]
+  },
+  {
+    "file": "User_<LOCAL_STEAM_USER>\\Save\\Survival\\123.db",
+    "sha256": "46436a929e04c149babe5e9eedf19b3aebbe353ed4b9cb3d0da3746fc17c6ece",
+    "game": [
+      29,
+      14,
+      834223556,
+      7408790
+    ],
+    "bodies": {
+      "total": 9256,
+      "minimum_55_bytes": 9256,
+      "id_BE_at_3_matches": 9256,
+      "world_BE_at_7_matches": 9256,
+      "bounds_exact_match": 9256
+    },
+    "body_variants": {
+      "000101:60": 5170,
+      "000201:80": 4086
+    },
+    "quaternion_norm_squared_range": [
+      0.9999996594491529,
+      1.0000003782250477
+    ],
+    "child_shapes": {
+      "total": 640319,
+      "id_BE_at_3_matches": 640319,
+      "body_BE_at_7_matches": 640319,
+      "body_BE_at_27_matches": 640319
+    },
+    "child_examples": [
+      {
+        "id": 1,
+        "bodyId": 1,
+        "bytes": 43,
+        "prefix": "01200100000001000000015f91eaf4800a3d9f8e43aad10c5e57bc00000001000000000000ff1c259c7500"
+      },
+      {
+        "id": 2,
+        "bodyId": 2,
+        "bytes": 43,
+        "prefix": "0120010000000200000002632fa3284e909e818a41e907cc1deca600000002000000000000fffe9f3e7500"
+      }
+    ]
+  },
+  {
+    "file": "User_<LOCAL_STEAM_USER>\\Save\\Survival\\Backup\\123_2026-10-17_10-01-33.db",
+    "sha256": "6d1236bf08cae90a78615e6d0c0a557ed34ed0948d8e4c924f051276e917874f",
+    "game": [
+      28,
+      14,
+      834223556,
+      3002947
+    ],
+    "bodies": {
+      "total": 2093,
+      "minimum_55_bytes": 2093,
+      "id_BE_at_3_matches": 2093,
+      "world_BE_at_7_matches": 2093,
+      "bounds_exact_match": 2093
+    },
+    "body_variants": {
+      "000101:60": 1159,
+      "000201:80": 934
+    },
+    "quaternion_norm_squared_range": [
+      0.9999996909466953,
+      1.0000003201162153
+    ],
+    "child_shapes": {
+      "total": 6958,
+      "id_BE_at_3_matches": 6958,
+      "body_BE_at_7_matches": 6958,
+      "body_BE_at_27_matches": 6958
+    },
+    "child_examples": [
+      {
+        "id": 1,
+        "bodyId": 1,
+        "bytes": 43,
+        "prefix": "01200100000001000000015f91eaf4800a3d9f8e43aad10c5e57bc00000001000000000000ff1c259c7500"
+      },
+      {
+        "id": 2,
+        "bodyId": 2,
+        "bytes": 43,
+        "prefix": "0120010000000200000002632fa3284e909e818a41e907cc1deca600000002000000000000fffe9f3e7500"
+      }
+    ]
+  }
+]

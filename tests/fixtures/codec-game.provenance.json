@@ -1,0 +1,15 @@
+{
+  "fixture": "codec-game.bin",
+  "sha256": "3877eea012d6e59f56fb65e394e26118f998590a9666e132f67abf28b9801afb",
+  "format": "SDSCOD01; little-endian uint32 source_size, compressed_size; source bytes; compressed bytes",
+  "source_size": 4097,
+  "compressed_size": 2074,
+  "source_generation": "source[0]=0x7f; source[i]=uint8((i*17)^(i>>3)) for 1<=i<4097",
+  "game_exe_sha256": "cf403cf9d3e465e05298c8e6082f4d664c32140ebcc4696a64200e367abb530d",
+  "origin": "Synthetic codec invocation inside the original game through ScrapdsProbeCodecTest; source contains no copied game assets",
+  "compress_wrapper_rva": "0xB59510",
+  "decompress_wrapper_rva": "0x4658D0",
+  "native_roundtrip": "passed",
+  "independent_decoder": "Python lz4.block decoded compressed body to the 4096-byte synthetic source body",
+  "scope": "One deterministic synthetic codec example; establishes tested byte-0-preserving raw LZ4 block framing. Does not establish handshake, split-packet semantics or full protocol compatibility."
+}
