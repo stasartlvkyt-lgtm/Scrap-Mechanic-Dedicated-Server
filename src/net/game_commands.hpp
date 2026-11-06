@@ -48,6 +48,17 @@ struct InteractCharacterCommand {
     std::uint32_t character_id{};
     bool operator==(const InteractCharacterCommand&) const = default;
 };
+struct CreateLiftCommand {
+    // Exact nine-word payload shape is confirmed by the dispatcher. Field
+    // semantics are retained as opaque signed words until the lift handler is
+    // fully mapped; indexes refer to the handler's native packed structure.
+    std::array<std::int32_t,9> packed_fields{};
+    bool operator==(const CreateLiftCommand&) const = default;
+};
+struct RemoveLiftCommand {
+    std::uint32_t lift_id{};
+    bool operator==(const RemoveLiftCommand&) const = default;
+};
 struct BuildShapeCommand {
     std::uint32_t body_id{}, child_shape_id{};
     std::uint8_t kind{}; // Observed: 2=new placement, 4=body/shape target, 8=joint target.
@@ -65,11 +76,12 @@ struct BuildShapeCommand {
 };
 using GameCommand = std::variant<RemoveShapeCommand, RemoveJointCommand, PaintShapeCommand,
                                  PaintJointCommand, PaintCharacterCommand, InteractHarvestableCommand,
-                                 InteractCharacterCommand, BuildShapeCommand>;
+                                 InteractCharacterCommand, CreateLiftCommand, RemoveLiftCommand,
+                                 BuildShapeCommand>;
 
 // Throws invalid_argument for unknown IDs or any truncated/trailing payload.
-// The codec currently covers application IDs 22-29; interaction semantics are
-// build-bound and remain rejected by the gameplay layer until implemented.
+// The codec currently covers application IDs 22-2b; interaction and lift
+// semantics remain rejected by the gameplay layer until implemented.
 // Semantic checks (world, ownership, geometry, inventory cost) belong to game/.
 GameCommand parse_game_command(std::span<const std::uint8_t> plaintext);
 std::vector<std::uint8_t> serialize_game_command(const GameCommand& command);

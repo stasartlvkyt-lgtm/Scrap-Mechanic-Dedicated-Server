@@ -51,7 +51,17 @@ int main() {
         const std::vector<std::uint8_t> character_interaction{0x29,0x50,0x60,0x70,0x80};
         const auto interaction=std::get<InteractCharacterCommand>(parse_game_command(character_interaction));
         require(interaction.character_id==0x50607080&&serialize_game_command(interaction)==character_interaction,"character interaction layout wrong");
-        for (const auto& bytes : {remove,paint,joint,character,harvestable,character_interaction}) {
+        const std::vector<std::uint8_t> lift_create{
+            0x2a, 0x00,0x00,0x00,0x09, 0xff,0xff,0xff,0xf8, 0x01,0x02,0x03,0x04,
+            0x11,0x22,0x33,0x44, 0x55,0x66,0x77,0x88, 0x90,0xa0,0xb0,0xc0,
+            0xd0,0xe0,0xf0,0x10, 0x7f,0xff,0xff,0xff, 0x80,0x00,0x00,0x00};
+        const auto lift=std::get<CreateLiftCommand>(parse_game_command(lift_create));
+        require(lift.packed_fields==std::array<std::int32_t,9>{INT32_MIN,INT32_MAX,static_cast<std::int32_t>(0xd0e0f010u),static_cast<std::int32_t>(0x90a0b0c0u),0x55667788,0x11223344,0x01020304,-8,9},"lift create packed word order wrong");
+        require(serialize_game_command(lift)==lift_create,"lift create encoding differs from packed byte oracle");
+        const std::vector<std::uint8_t> lift_remove{0x2b,0x12,0x34,0x56,0x78};
+        const auto removed_lift=std::get<RemoveLiftCommand>(parse_game_command(lift_remove));
+        require(removed_lift.lift_id==0x12345678&&serialize_game_command(removed_lift)==lift_remove,"lift removal layout wrong");
+        for (const auto& bytes : {remove,paint,joint,character,harvestable,character_interaction,lift_create,lift_remove}) {
             for (std::size_t n=0;n<bytes.size();++n)
                 rejects([&]{parse_game_command(std::span(bytes).first(n));}, "truncated command accepted");
             auto trailing=bytes;trailing.push_back(0);

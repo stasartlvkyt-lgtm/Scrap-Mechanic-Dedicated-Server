@@ -76,6 +76,10 @@ int main(){try{
     require(!result.applied&&result.reason=="harvestable-interaction-not-implemented","unsupported Harvestable interaction was accepted");
     result=scrapds::apply_game_command(world,assets,scrapds::net::InteractCharacterCommand{456});
     require(!result.applied&&result.reason=="character-interaction-not-implemented","unsupported Character interaction was accepted");
+    result=scrapds::apply_game_command(world,assets,scrapds::net::CreateLiftCommand{});
+    require(!result.applied&&result.reason=="lift-creation-not-implemented","unsupported Lift creation was accepted");
+    result=scrapds::apply_game_command(world,assets,scrapds::net::RemoveLiftCommand{1});
+    require(!result.applied&&result.reason=="lift-removal-not-implemented","unsupported Lift removal was accepted");
     auto state=scrapds::net::make_child_shape_state(world.shapes().at(11).data,214);
     auto decoded=scrapds::net::parse_net_object_packet(scrapds::net::make_net_object_packet({22,3,{state}}));
     require(decoded.records.size()==1&&decoded.records[0].payload.at(12)==0xff&&decoded.records[0].payload.at(15)==0xef,"paint replication did not carry native color");

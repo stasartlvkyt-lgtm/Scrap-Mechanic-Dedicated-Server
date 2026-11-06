@@ -105,6 +105,15 @@ GameCommand parse_game_command(std::span<const std::uint8_t> plaintext) {
     }
     case 0x28: command=InteractHarvestableCommand{input.word()};break;
     case 0x29: command=InteractCharacterCommand{input.word()};break;
+    case 0x2a: {
+        CreateLiftCommand value;
+        // The dispatcher reverses the complete 36-byte packed object before
+        // the handler reads its nine native words.
+        for(int i=8;i>=0;--i)value.packed_fields[static_cast<std::size_t>(i)]=input.signed_word();
+        command=value;
+        break;
+    }
+    case 0x2b: command=RemoveLiftCommand{input.word()};break;
     default: throw std::invalid_argument("unsupported game command ID");
     }
     input.finish();
@@ -138,6 +147,11 @@ std::vector<std::uint8_t> serialize_game_command(const GameCommand& command) {
             bytes.push_back(0x28);word(bytes,value.harvestable_id);
         } else if constexpr (std::is_same_v<Type, InteractCharacterCommand>) {
             bytes.push_back(0x29);word(bytes,value.character_id);
+        } else if constexpr (std::is_same_v<Type, CreateLiftCommand>) {
+            bytes.push_back(0x2a);
+            for(int i=8;i>=0;--i)word(bytes,std::bit_cast<std::uint32_t>(value.packed_fields[static_cast<std::size_t>(i)]));
+        } else if constexpr (std::is_same_v<Type, RemoveLiftCommand>) {
+            bytes.push_back(0x2b);word(bytes,value.lift_id);
         } else {
             bytes.push_back(0x22);
             word(bytes,std::bit_cast<std::uint32_t>(value.inventory_slot));

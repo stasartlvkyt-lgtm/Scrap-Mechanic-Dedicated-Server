@@ -26,6 +26,8 @@ packets; the transport's first-byte-preserving LZ4 wrapper is a separate layer.
 | `27` | 32bits /4bytes | `B45A70` | Remove joint, including inventory rules |
 | `28` | 32bits /4bytes | `B465B0` | Harvestable interaction; exact action unresolved |
 | `29` | 32bits /4bytes | `B46960` | Character interaction; exact action unresolved |
+| `2A` | 288bits /36bytes | `B3F580` | Lift creation; nine-word field semantics unresolved |
+| `2B` | 32bits /4bytes | `822030` | Lift-manager request by ID; removal semantics inferred |
 
 IDs in this table are hexadecimal. On this little-endian target the dispatcher
 reverses **the complete packed object**, rather than independently swapping its
@@ -123,6 +125,16 @@ are now parsed and length-checked, then explicitly rejected by the native
 gameplay layer because Harvestable/Character interaction semantics are not
 implemented. They are consumed by the server and are not relayed to other
 clients as if they were authoritative updates.
+
+ID `2A` is a 36-byte packed object read by handler `B3F580`; the dispatcher
+reverses the entire object before the handler sees nine 32-bit words. The codec
+preserves those words in handler order but does not assign unverified meanings
+to them. The handler creates runtime lift state and updates associated world
+physics; the lift data is not yet connected to the SQLite world model. ID `2B`
+passes one 32-bit ID to the lift manager (`822030`); that it removes a lift is
+an inference from the paired create/remove call path. The listener strictly
+decodes both commands and rejects them instead of forwarding requests as
+authoritative world state.
 
 ## Replication and remaining work
 
