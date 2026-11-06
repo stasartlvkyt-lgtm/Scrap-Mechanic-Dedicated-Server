@@ -88,6 +88,11 @@ int main() {
         const auto corrected_state=scrapds::net::parse_server_character_update(corrected_wire).character;
         for(std::size_t i=0;i<3;++i)if(std::abs(corrected_state.position[i]-corrected[i])>0.0001f)
             throw std::runtime_error("server Character authoritative position encoding mismatch");
+        const std::array<float,3> corrected_velocity{1.25f,-2.5f,3.75f};
+        const auto corrected_motion=scrapds::net::parse_server_character_update(
+            scrapds::net::make_server_character_update(movement,558600,state.tick,7,corrected,corrected_velocity)).character;
+        for(std::size_t i=0;i<3;++i)if(std::abs(corrected_motion.velocity[i]-corrected_velocity[i])>0.002f)
+            throw std::runtime_error("server Character authoritative velocity encoding mismatch");
         const auto observer=scrapds::net::parse_server_character_update(scrapds::net::make_server_character_update(movement,558600,558510,2));
         if(observer.client_tick!=558510||observer.character.position!=state.position)throw std::runtime_error("server Character frame did not preserve the observer's acknowledged tick");
         {

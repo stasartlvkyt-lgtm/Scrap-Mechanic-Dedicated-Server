@@ -36,7 +36,7 @@ struct ServerCharacterUpdate {
 };
 // One type-3/4 Character record in ID24 server-to-client framing.
 ServerCharacterUpdate parse_server_character_update(std::span<const std::uint8_t> packet);
-std::vector<std::uint8_t> make_server_character_update(std::span<const std::uint8_t> client_packet,std::uint32_t server_tick,std::uint32_t acknowledged_client_tick,std::uint8_t sequence=0,std::optional<std::array<float,3>> authoritative_position=std::nullopt);
+std::vector<std::uint8_t> make_server_character_update(std::span<const std::uint8_t> client_packet,std::uint32_t server_tick,std::uint32_t acknowledged_client_tick,std::uint8_t sequence=0,std::optional<std::array<float,3>> authoritative_position=std::nullopt,std::optional<std::array<float,3>> authoritative_velocity=std::nullopt);
 struct ServerBodyUpdate {
     std::uint32_t server_tick{}, acknowledged_client_tick{}, body_id{};
     std::uint8_t sequence{},flags{};

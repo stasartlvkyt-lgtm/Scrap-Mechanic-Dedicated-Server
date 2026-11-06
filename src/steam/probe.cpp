@@ -934,6 +934,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                         const auto plain=net::decompress_packet(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(message->data),message->size));
                         auto update=net::parse_character_update(plain);
                         std::optional<std::array<float,3>> corrected_position;
+                        std::optional<std::array<float,3>> corrected_velocity;
                         if(update.has_character_state) {
                             if(native_players) {
                                 std::array<float,3> baseline{};double elapsed_ticks{};bool have_baseline=false;
@@ -958,6 +959,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                     const auto violation=net::character_displacement_violation(baseline,update.position,elapsed_ticks*0.025);
                                     if(!violation.empty()) {
                                         update.position=baseline;corrected_position=baseline;
+                                        if(update.state_type==3){update.velocity={0,0,0};corrected_velocity=update.velocity;}
                                         if(game_events.size()<10000)game_events.push_back("{\"kind\":\"character-motion-corrected\",\"reason\":"+json_quote(violation)+",\"elapsed_seconds\":"+elapsed(started)+'}');
                                     } else if((character_collision||physics)&&player_worlds.contains(message->connection)) {
                                         const Vec3 start{baseline[0],baseline[1],baseline[2]};
@@ -971,8 +973,15 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                         update.position[2]=static_cast<float>(corrected.z);
                                         if(std::abs(corrected.x-(baseline[0]+dx))>0.002||
                                            std::abs(corrected.y-(baseline[1]+dy))>0.002||
-                                           std::abs(corrected.z-(baseline[2]+dz))>0.002)
+                                           std::abs(corrected.z-(baseline[2]+dz))>0.002) {
                                             corrected_position=update.position;
+                                            if(update.state_type==3) {
+                                                const auto dt=elapsed_ticks*0.025;
+                                                for(std::size_t axis=0;axis<3;++axis)
+                                                    update.velocity[axis]=dt>0?static_cast<float>((update.position[axis]-baseline[axis])/dt):0.0f;
+                                                corrected_velocity=update.velocity;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -992,12 +1001,12 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             for(const auto peer:game_started)if(peer!=message->connection&&!pending_close.contains(peer)&&visible_players[peer].contains(message->connection)) {
                                 std::uint32_t acknowledged_tick=0;
                                 if(const auto latest=latest_client_ticks.find(peer);latest!=latest_client_ticks.end())acknowledged_tick=latest->second;
-                                const auto forwarded=net::compress_packet(net::make_server_character_update(plain,server_tick,acknowledged_tick,sequence,corrected_position));
+                                const auto forwarded=net::compress_packet(net::make_server_character_update(plain,server_tick,acknowledged_tick,sequence,corrected_position,corrected_velocity));
                                 std::int64_t number=-1;
                                 net.send(net.sockets,peer,forwarded.data(),static_cast<std::uint32_t>(forwarded.size()),0,&number);
                             }
                             if(corrected_position&&!pending_close.contains(message->connection)) {
-                                const auto authoritative=net::compress_packet(net::make_server_character_update(plain,server_tick,update.tick,sequence,corrected_position));
+                                const auto authoritative=net::compress_packet(net::make_server_character_update(plain,server_tick,update.tick,sequence,corrected_position,corrected_velocity));
                                 std::int64_t number=-1;
                                 if(net.send(net.sockets,message->connection,authoritative.data(),static_cast<std::uint32_t>(authoritative.size()),0,&number)!=1)
                                     pending_close.insert(message->connection);

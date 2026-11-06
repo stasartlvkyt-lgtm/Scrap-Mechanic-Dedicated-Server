@@ -195,12 +195,13 @@ ServerCharacterUpdate parse_server_character_update(std::span<const std::uint8_t
     return out;
 }
 std::vector<std::uint8_t> make_server_character_update(std::span<const std::uint8_t> packet,std::uint32_t server_tick,std::uint32_t acknowledged_client_tick,std::uint8_t sequence) {
-    return make_server_character_update(packet,server_tick,acknowledged_client_tick,sequence,std::nullopt);
+    return make_server_character_update(packet,server_tick,acknowledged_client_tick,sequence,std::nullopt,std::nullopt);
 }
-std::vector<std::uint8_t> make_server_character_update(std::span<const std::uint8_t> packet,std::uint32_t server_tick,std::uint32_t acknowledged_client_tick,std::uint8_t sequence,std::optional<std::array<float,3>> authoritative_position) {
+std::vector<std::uint8_t> make_server_character_update(std::span<const std::uint8_t> packet,std::uint32_t server_tick,std::uint32_t acknowledged_client_tick,std::uint8_t sequence,std::optional<std::array<float,3>> authoritative_position,std::optional<std::array<float,3>> authoritative_velocity) {
     std::size_t begin{},end{};const auto update=parse_client(packet,&begin,&end);
     if(!update.has_character_state||sequence>=64)throw std::invalid_argument("invalid-server-character-update");
     auto source=std::vector<std::uint8_t>(packet.begin()+1,packet.end());
+    const auto set=[&](std::size_t at,bool value){const auto mask=std::uint8_t(0x80u>>(at%8));if(value)source.at(at/8)|=mask;else source.at(at/8)&=std::uint8_t(~mask);};
     if(authoritative_position) {
         for(const auto value:*authoritative_position)if(!std::isfinite(value))throw std::invalid_argument("nonfinite-authoritative-character-position");
         // Type 3 movement and type 4 tumble both put their three 1+27-bit
@@ -210,9 +211,24 @@ std::vector<std::uint8_t> make_server_character_update(std::span<const std::uint
         for(unsigned axis=0;axis<3;++axis) {
             const auto magnitude=static_cast<std::uint32_t>(std::min(134217727.0,std::round(std::abs(double((*authoritative_position)[axis]))*(134217727.0/8192.0))));
             auto bit=position_begin+axis*28;
-            const auto set=[&](std::size_t at,bool value){const auto mask=std::uint8_t(0x80u>>(at%8));if(value)source[at/8]|=mask;else source[at/8]&=std::uint8_t(~mask);};
             set(bit++,std::signbit((*authoritative_position)[axis]));
             for(unsigned shift=0;shift<27;) {const auto width=std::min(8u,27u-shift);for(unsigned j=0;j<width;++j)set(bit++,((magnitude>>(shift+width-1-j))&1u)!=0);shift+=width;}
+        }
+    }
+    if(authoritative_velocity) {
+        if(update.state_type!=3)throw std::invalid_argument("authoritative-character-velocity-requires-movement-state");
+        auto bit=begin+48+84;
+        if(bit+42>end)throw std::invalid_argument("truncated-authoritative-character-velocity");
+        for(unsigned axis=0;axis<3;++axis) {
+            const auto value=(*authoritative_velocity)[axis];
+            if(!std::isfinite(value))throw std::invalid_argument("nonfinite-authoritative-character-velocity");
+            const auto magnitude=static_cast<std::uint32_t>(std::clamp(std::round(std::abs(double(value))*(8191.0/10.0)),0.0,8191.0));
+            set(bit++,std::signbit(value));
+            for(unsigned shift=0;shift<13;) {
+                const auto width=std::min(8u,13u-shift);const auto chunk=(magnitude>>shift)&((1u<<width)-1u);
+                for(unsigned j=width;j>0;--j)set(bit++,((chunk>>(j-1))&1u)!=0);
+                shift+=width;
+            }
         }
     }
     BitWriter writer(0x18);writer.variable(server_tick,20,21);
