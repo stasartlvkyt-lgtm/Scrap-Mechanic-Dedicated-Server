@@ -75,6 +75,11 @@ int main() {
         const auto server_decoded=scrapds::net::parse_server_character_update(server_wire);
         if(server_decoded.server_tick!=558600||server_decoded.client_tick!=state.tick||server_decoded.sequence!=7||server_decoded.character.character_id!=state.character_id||server_decoded.character.position!=state.position)
             throw std::runtime_error("server Character framing roundtrip mismatch");
+        const std::array<float,3> corrected{state.position[0]+0.75f,state.position[1]-0.5f,state.position[2]+0.25f};
+        const auto corrected_wire=scrapds::net::make_server_character_update(movement,558600,state.tick,7,corrected);
+        const auto corrected_state=scrapds::net::parse_server_character_update(corrected_wire).character;
+        for(std::size_t i=0;i<3;++i)if(std::abs(corrected_state.position[i]-corrected[i])>0.0001f)
+            throw std::runtime_error("server Character authoritative position encoding mismatch");
         const auto observer=scrapds::net::parse_server_character_update(scrapds::net::make_server_character_update(movement,558600,558510,2));
         if(observer.client_tick!=558510||observer.character.position!=state.position)throw std::runtime_error("server Character frame did not preserve the observer's acknowledged tick");
         {

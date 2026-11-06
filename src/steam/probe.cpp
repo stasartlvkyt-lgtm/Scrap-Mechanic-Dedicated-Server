@@ -13,6 +13,7 @@
 #include "game/replication.hpp"
 #include "game/player_spawn.hpp"
 #include "physics/world_physics.hpp"
+#include "physics/world_collision.hpp"
 #include "physics/overworld_streamer.hpp"
 #include <lz4.h>
 #include <algorithm>
@@ -478,7 +479,9 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
     std::map<std::uint32_t,std::uint8_t> physics_flags;
     std::set<std::uint32_t> mapped_physics_bodies;
     std::optional<WorldPhysics> physics;
+    std::optional<WorldCollision> character_collision;
     std::optional<OverworldTerrainStreamer> overworld_terrain;
+    if(native_players&&!native_physics)character_collision.emplace(WorldCollision::from_world(*native_world));
     if(native_physics) {
         for(const auto& packet:replay->post)if(!packet.empty()&&packet[0]==24) {
             try {for(const auto& body:net::extract_server_body_updates(packet))physics_flags.insert_or_assign(body.body_id,body.flags);}
@@ -850,6 +853,12 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                     for(const auto peer:game_started)if(player_worlds.contains(peer)&&player_worlds.at(peer)==command_world)recipients.insert(peer);
                             }
                             if(result.applied)++applied_commands;else ++rejected_commands;
+                            if(world_mutated&&character_collision)try {
+                                character_collision.emplace(WorldCollision::from_world(*native_world));
+                            } catch(const std::exception& error) {
+                                character_collision.reset();
+                                std::cerr<<"scrapds: character collision disabled after world change: "<<error.what()<<'\n';
+                            }
                             if(world_mutated&&physics) {
                                 try {
                                     auto rebuilt=WorldPhysics::from_world(*native_world,1000.0,&mapped_physics_bodies,&*native_assets);
@@ -871,8 +880,28 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                     native_command=true;
                     try {
                         const auto plain=net::decompress_packet(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(message->data),message->size));
-                        const auto update=net::parse_character_update(plain);
+                        auto update=net::parse_character_update(plain);
+                        std::optional<std::array<float,3>> corrected_position;
                         if(update.has_character_state) {
+                            if(native_players)if(const auto previous=server_characters.latest(message->peer.steam_id())) {
+                                const auto tick_delta=std::bit_cast<std::int32_t>(update.tick-previous->tick);
+                                if(tick_delta<0)throw std::runtime_error("stale-character-tick");
+                                const double elapsed_ticks=std::clamp(double(tick_delta),0.0,40.0);
+                                const double allowed_distance=6.0*(elapsed_ticks*0.025)+0.3;
+                                const double dx=double(update.position[0])-previous->position[0];
+                                const double dy=double(update.position[1])-previous->position[1];
+                                const double horizontal_distance=std::hypot(dx,dy);
+                                if(horizontal_distance>allowed_distance)throw std::runtime_error("character-horizontal-speed-limit");
+                                if(character_collision&&player_worlds.contains(message->connection)) {
+                                    const Vec3 start{previous->position[0],previous->position[1],previous->position[2]};
+                                    const auto motion=character_collision->move_capsule(player_worlds.at(message->connection),start,{dx,dy,0},0.3,0.8);
+                                    update.position[0]=static_cast<float>(motion.position.x);
+                                    update.position[1]=static_cast<float>(motion.position.y);
+                                    if(std::abs(motion.position.x-(previous->position[0]+dx))>0.002||
+                                       std::abs(motion.position.y-(previous->position[1]+dy))>0.002)
+                                        corrected_position=update.position;
+                                }
+                            }
                             const auto rejection=native_players?server_characters.observe(message->peer.steam_id(),update):character_states.observe(message->peer.steam_id(),update);if(!rejection.empty())throw std::runtime_error(rejection);
                             if(native_players) {
                                 StoredPlayerLocation location;location.world_id=player_worlds.at(message->connection);
@@ -889,9 +918,15 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             for(const auto peer:game_started)if(peer!=message->connection&&!pending_close.contains(peer)&&visible_players[peer].contains(message->connection)) {
                                 std::uint32_t acknowledged_tick=0;
                                 if(const auto latest=latest_client_ticks.find(peer);latest!=latest_client_ticks.end())acknowledged_tick=latest->second;
-                                const auto forwarded=net::compress_packet(net::make_server_character_update(plain,server_tick,acknowledged_tick,sequence));
+                                const auto forwarded=net::compress_packet(net::make_server_character_update(plain,server_tick,acknowledged_tick,sequence,corrected_position));
                                 std::int64_t number=-1;
                                 net.send(net.sockets,peer,forwarded.data(),static_cast<std::uint32_t>(forwarded.size()),0,&number);
+                            }
+                            if(corrected_position&&!pending_close.contains(message->connection)) {
+                                const auto authoritative=net::compress_packet(net::make_server_character_update(plain,server_tick,update.tick,sequence,corrected_position));
+                                std::int64_t number=-1;
+                                if(net.send(net.sockets,message->connection,authoritative.data(),static_cast<std::uint32_t>(authoritative.size()),0,&number)!=1)
+                                    pending_close.insert(message->connection);
                             }
                         }
                     } catch(const std::exception& error) {

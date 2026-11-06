@@ -218,9 +218,15 @@ The current executable and evidence tools form a working foundation for it.
   disconnect. It rejects stale ticks with wrap-aware uint32 serial arithmetic.
   Accepted updates are relayed to other joined peers. Malformed, stale, or
   ownership-conflicting updates are dropped and counted.
-- This remains client-owned movement relay. Position is not server-simulated,
-  the first-claim binding is not verified against the server's Player table,
-  and character state is not physically simulated or corrected.
+- The listener now rejects horizontal movement above 6 m/s plus 0.3 m tolerance
+  per client tick delta, then sweeps the horizontal capsule path against saved
+  block boxes. Corrected coordinates are written into the server ID24 packet
+  sent to the owner and observing peers.
+  Capsule dimensions come from the installed default character definition
+  (radius 0.3 m, total height 1.4 m). This does not yet simulate vertical
+  movement, terrain, parts or dynamic obstacles; collision sweeps are disabled
+  when experimental body physics is active. The first claim still is not
+  verified against the server's Player table, and live behavior is unverified.
 - `character_tests` and the full CTest suite pass (18/18).
 
 - Added a 30 Hz server tick stream (message `0x1E`, tick +2 per packet) to
@@ -537,9 +543,10 @@ accepted client ID30 state into unreliable server ID24 frames for other peers
 that received the corresponding Character spawn. The delta uses each receiving
 peer's latest accepted input/heartbeat tick (or zero before its first packet),
 following the receiver's acknowledgement bookkeeping; this mapping is inferred
-from `47BCC0` and still requires a live multi-client check. This forwards client
-movement rather than simulating it; multi-client gameplay confirmation remains
-outstanding.
+from `47BCC0` and still requires a live multi-client check. Horizontal speed is
+bounded and saved block geometry clips the path in native-player mode. Vertical
+movement and the full character controller remain client supplied, and
+multi-client gameplay confirmation remains outstanding.
 Client loop `47BCC0` advances its runtime tick once per 25 ms. The listener now
 advances its clock once per 25 ms instead of twice per 33 ms; the old cadence
 diverged from the client. The revised cadence needs live-session confirmation.
