@@ -188,9 +188,10 @@ spend a quantity transactionally without changing any opaque bytes. Player
 snapshots now map to persistent per-player containers; new players receive a
 30-slot container with the six starter tools initialized from the native
 player setup routine, and type-4 create/state records encode it for clients.
-Survival BuildShape validates the player's slot and UUID, checks block volume
-against command quantity, and creates the block while spending the stack in
-one save transaction. Changed slots are broadcast to same-world peers. This
+Survival BuildShape validates the player's slot and UUID, derives the material
+cost from the block volume (the captured client quantity field is not that
+cost), and creates the block while spending the stack in one save transaction.
+Changed slots are broadcast to same-world peers. This
 code compiles but still needs live-client validation; crafting and transfers
 remain unsupported.
 

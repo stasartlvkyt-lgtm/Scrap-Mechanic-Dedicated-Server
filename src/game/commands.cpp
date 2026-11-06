@@ -96,7 +96,9 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
                 if(dimension<=0||dimension>256)return {false,"invalid-block-dimensions",{}};
                 volume*=static_cast<std::uint32_t>(dimension);
             }
-            if(volume>UINT32_MAX||!build->quantity||build->quantity!=volume)return {false,"invalid-build-quantity",{}};
+            // The captured client oracle sends quantity=1 for a 1x2x5 block;
+            // it is not the material cost. Charge the server-computed volume.
+            if(volume>UINT32_MAX||!build->quantity)return {false,"invalid-build-quantity",{}};
             item_cost=static_cast<std::uint32_t>(volume);
         }
         try {
