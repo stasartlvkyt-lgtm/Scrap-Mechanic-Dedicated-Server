@@ -62,7 +62,10 @@ PlayerSnapshot parse_player_blob_entry(const BlobDataEntry& entry) {
     const auto name_size=std::size_t(word(1));const auto name=take(name_size);
     if(std::find(name.begin(),name.end(),0)!=name.end())throw std::invalid_argument("invalid-player-blob-name");
     result.info.name.assign(name.begin(),name.end());if(word(4)!=2)throw std::invalid_argument("unsupported-player-blob-appearance-version");
-    result.info.appearance_type=std::uint8_t(word(1));result.info.appearance.resize(9);
+    result.info.appearance_type=std::uint8_t(word(1));
+    const auto appearance_count=word(1);
+    if(appearance_count>9)throw std::invalid_argument("too-many-player-blob-appearance-parts");
+    result.info.appearance.resize(appearance_count);
     for(auto& part:result.info.appearance){const auto uuid=take(16);std::copy(uuid.begin(),uuid.end(),part.uuid_memory.begin());}
     for(auto& part:result.info.appearance)part.color=word(4);
     result.info.inventory_kind=word(4);const auto inventory_size=std::size_t(word(4));
