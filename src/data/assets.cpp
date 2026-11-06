@@ -69,7 +69,7 @@ AssetDefinitions AssetDefinitions::load(const std::filesystem::path& root) {
             std::string source{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
             for (const auto* list : {"$.blockList", "$.partList"}) {
                 sqlite3_stmt* statement=nullptr;
-                const char* query="SELECT json_extract(value,'$.uuid'),json_extract(value,'$.name'),json_extract(value,'$.color'),json_extract(value,'$.physicsMaterial'),json_extract(value,'$.box.x'),json_extract(value,'$.box.y'),json_extract(value,'$.box.z'),json_type(value,'$.hull'),json_extract(value,'$.cylinder.axis'),json_extract(value,'$.cylinder.diameter'),json_extract(value,'$.cylinder.depth'),json_extract(value,'$.hull.x'),json_extract(value,'$.hull.y'),json_extract(value,'$.hull.z'),json_extract(value,'$.hull.col'),json_extract(value,'$.hull.margin'),json_type(value,'$.box'),json_type(value,'$.cylinder'),json_extract(value,'$.survivalSpring.length'),json_type(value,'$.survivalSpring.stiffnessLevels') FROM json_each(?1,?2)";
+                const char* query="SELECT json_extract(value,'$.uuid'),json_extract(value,'$.name'),json_extract(value,'$.color'),json_extract(value,'$.physicsMaterial'),json_extract(value,'$.box.x'),json_extract(value,'$.box.y'),json_extract(value,'$.box.z'),json_type(value,'$.hull'),json_extract(value,'$.cylinder.axis'),json_extract(value,'$.cylinder.diameter'),json_extract(value,'$.cylinder.depth'),json_extract(value,'$.hull.x'),json_extract(value,'$.hull.y'),json_extract(value,'$.hull.z'),json_extract(value,'$.hull.col'),json_extract(value,'$.hull.margin'),json_type(value,'$.box'),json_type(value,'$.cylinder'),json_extract(value,'$.survivalSpring.length'),json_type(value,'$.survivalSpring.stiffnessLevels'),json_extract(value,'$.stackSize') FROM json_each(?1,?2)";
                 const auto prepared=sqlite3_prepare_v2(db.get(),query,-1,&statement,nullptr);
                 std::unique_ptr<sqlite3_stmt,decltype(&sqlite3_finalize)> s(statement,sqlite3_finalize);
                 if(prepared!=SQLITE_OK)throw std::runtime_error("SQLite JSON reader is unavailable");
@@ -99,6 +99,10 @@ AssetDefinitions AssetDefinitions::load(const std::filesystem::path& root) {
                     }
                     if(sqlite3_column_type(s.get(),18)==SQLITE_INTEGER&&sqlite3_column_type(s.get(),19)==SQLITE_NULL) {
                         const auto length=sqlite3_column_int64(s.get(),18);if(length>=1&&length<=32)asset.survival_spring_length=std::uint32_t(length);
+                    }
+                    if(sqlite3_column_type(s.get(),20)==SQLITE_INTEGER) {
+                        const auto size=sqlite3_column_int64(s.get(),20);
+                        if(size>0&&size<UINT32_MAX)asset.stack_size=std::uint32_t(size);
                     }
                     if(asset.uuid.size()!=36)throw std::runtime_error("Invalid shape UUID in asset definitions");
                     result.entries_.insert_or_assign(asset.uuid,std::move(asset));

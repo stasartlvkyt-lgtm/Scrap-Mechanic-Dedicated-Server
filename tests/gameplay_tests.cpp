@@ -29,8 +29,8 @@ int main(){try{
     require(attempted==std::vector<int>({1}),"closing peer received a later world update");
     Temp temp;
     const auto definitions=temp.p/"Data/Objects/Database/ShapeSets";std::filesystem::create_directories(definitions);
-    {std::ofstream file(definitions/"blocks.shapeset");file<<R"({"blockList":[{"uuid":"00000000-0000-0000-0000-000000000000","color":"112233","name":"test","physicsMaterial":"Wood"},{"uuid":"a6c6ce30-dd47-4587-b475-085d55c6a3b4","color":"9b683a","name":"wood","physicsMaterial":"Wood"}]})";}
-    {std::ofstream file(definitions/"parts.shapeset");file<<R"({"partList":[{"uuid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","color":"ffffff","name":"unsupported part"}]})";}
+    {std::ofstream file(definitions/"blocks.shapeset");file<<R"({"blockList":[{"uuid":"00000000-0000-0000-0000-000000000000","color":"112233","name":"test","physicsMaterial":"Wood"},{"uuid":"a6c6ce30-dd47-4587-b475-085d55c6a3b4","color":"9b683a","name":"wood","physicsMaterial":"Wood","stackSize":20}]})";}
+    {std::ofstream file(definitions/"parts.shapeset");file<<R"({"partList":[{"uuid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","color":"ffffff","name":"unsupported part","stackSize":5}]})";}
     auto assets=scrapds::AssetDefinitions::load(temp.p);require(assets.size()==3,"asset definition not loaded");
     require(assets.find("00000000-0000-0000-0000-000000000000")->default_color_abgr==0xff332211,"default color channel order");
     sqlite3* db=nullptr;const auto source=temp.p/"source.db";require(sqlite3_open(source.string().c_str(),&db)==SQLITE_OK,"fixture open");
@@ -83,6 +83,50 @@ int main(){try{
     require(bool(packet_file),"real build fixture unavailable");
     std::vector<std::uint8_t> packet{std::istreambuf_iterator<char>(packet_file),std::istreambuf_iterator<char>()};
     const auto command=scrapds::net::parse_game_command(packet);
+    // A full Survival inventory must reject removal without losing the block;
+    // making room permits a partial refund and the rest survives a checkpoint.
+    const auto survival_path=temp.p/"survival.db";std::filesystem::copy_file(source,survival_path);
+    require(sqlite3_open(survival_path.string().c_str(),&db)==SQLITE_OK,"survival fixture open");sql(db,"UPDATE Game SET flags=14");
+    auto survival_joint=joint;std::fill(survival_joint.begin()+15,survival_joint.begin()+31,0xaa);
+    insert(db,"UPDATE Joint SET data=?1 WHERE id=5",survival_joint);sqlite3_close(db);
+    auto survival=scrapds::WorldState::load(survival_path);
+    const auto container=survival.ensure_player_inventory_container(76561198000000001ull);
+    auto survival_build=std::get<scrapds::net::BuildShapeCommand>(command);survival_build.inventory_slot=0;
+    std::array<std::uint8_t,16> item{};std::reverse_copy(survival_build.shape_uuid.begin(),survival_build.shape_uuid.end(),item.begin());
+    require(assets.find("a6c6ce30-dd47-4587-b475-085d55c6a3b4")->stack_size==20,"asset stack size missing");
+    survival.credit_container(container,item,10,20);
+    require(scrapds::apply_game_command(survival,assets,survival_build,0,container).applied,"survival block build failed");
+    survival.credit_container(container,item,480,20);
+    auto alternate_type=survival.containers().at(container).data;alternate_type[9]=0xff;alternate_type[10]=0xff;
+    survival.replace_container_blob(container,std::move(alternate_type));
+    scrapds::net::RemoveShapeCommand survival_cut{{100,0,4,{6,15,0},{7,16,5}}};
+    auto refused=scrapds::apply_game_command(survival,assets,survival_cut,0,container);
+    require(!refused.applied&&refused.reason=="container-insufficient-space"&&survival.shapes().contains(200)&&survival.container_slot_quantity(container,0,item)==20,"full inventory did not roll back removal");
+    survival.spend_container_slot(container,0,item,5);
+    scrapds::net::InitialAssetCatalog survival_catalog;survival_catalog.shapes[item]=1;
+    const auto refunded=scrapds::apply_replicated_command(survival,assets,survival_cut,22,survival_catalog,0,container);
+    require(refunded.command.applied&&refunded.command.changed_container_slots.size()==1&&survival.container_slot_quantity(container,0,item)==20,"partial removal did not refund block volume");
+    require(survival.containers().at(container).serialized_entries[0][0]==0xff&&survival.containers().at(container).serialized_entries[0][1]==0xff,"refund changed existing item type");
+    const auto refund_packet=scrapds::net::parse_net_object_packet(refunded.response);
+    require(std::any_of(refund_packet.records.begin(),refund_packet.records.end(),[](const auto& record){return record.operation==3&&record.type==4;}),"refund slot was not replicated");
+    const scrapds::net::RemoveJointCommand survival_remove_joint{5};
+    const auto joint_refused=scrapds::apply_game_command(survival,assets,survival_remove_joint,0,container);
+    require(!joint_refused.applied&&survival.joints().contains(5),"full inventory allowed joint removal");
+    survival.spend_container_slot(container,1,item,20);
+    const auto joint_refunded=scrapds::apply_replicated_command(survival,assets,survival_remove_joint,23,survival_catalog,0,container);
+    std::array<std::uint8_t,16> joint_item{};joint_item.fill(0xaa);
+    require(joint_refunded.command.applied&&!survival.joints().contains(5)&&survival.container_slot_quantity(container,1,joint_item)==1,"joint item was not returned");
+    const auto joint_packet=scrapds::net::parse_net_object_packet(joint_refunded.response);
+    require(joint_packet.records.size()==2&&joint_packet.records[0].operation==2&&joint_packet.records[0].type==2&&joint_packet.records[1].type==4,"joint removal and refund were not replicated");
+    const auto controlled_path=temp.p/"controlled.db";std::filesystem::copy_file(source,controlled_path);
+    require(sqlite3_open(controlled_path.string().c_str(),&db)==SQLITE_OK,"controller fixture open");
+    sql(db,"CREATE TABLE Controller(id INTEGER PRIMARY KEY,hostId INTEGER,hostType INTEGER,data BLOB);INSERT INTO Controller VALUES(9,5,2,X'00')");sqlite3_close(db);
+    auto controlled=scrapds::WorldState::load(controlled_path);
+    const auto linked_removal=scrapds::apply_game_command(controlled,assets,survival_remove_joint);
+    require(!linked_removal.applied&&linked_removal.reason=="joint-has-controller-reference"&&controlled.joints().contains(5),"joint removal orphaned controller");
+    const auto survival_checkpoint=temp.p/"survival-checkpoint.db";survival.save_as(survival_checkpoint);
+    const auto restored_survival=scrapds::WorldState::load(survival_checkpoint);
+    require(restored_survival.container_slot_quantity(container,0,item)==20&&restored_survival.container_slot_quantity(container,1,joint_item)==1&&!restored_survival.joints().contains(5)&&!restored_survival.shapes().contains(200)&&restored_survival.shapes().contains(201),"refund state did not survive checkpoint");
     const auto original_body_count=world.bodies().size(),original_shape_count=world.shapes().size();
     result=scrapds::apply_game_command(world,assets,command);
     require(result.applied&&result.created_bodies==std::vector<std::uint32_t>{100}&&result.created_shapes==std::vector<std::uint32_t>{200},"real build was not allocated saved IDs");

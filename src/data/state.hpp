@@ -112,6 +112,9 @@ public:
     // other slots, suffix, row ID and all unrelated container data.
     void spend_container_slot(std::uint32_t container_id,std::uint32_t slot,
         const std::array<std::uint8_t,16>& saved_item_uuid,std::uint32_t quantity);
+    // Fill matching stacks, then empty slots; reject if the full quantity cannot fit.
+    std::vector<std::uint32_t> credit_container(std::uint32_t container_id,
+        const std::array<std::uint8_t,16>& saved_item_uuid,std::uint32_t quantity,std::uint32_t stack_size);
     const std::set<std::uint32_t>& container_ids() const;
     const std::map<std::string, std::uint64_t>& table_counts() const;
     // Worlds whose saved game metadata explicitly names CreativeFlatWorld.

@@ -110,10 +110,13 @@ dispatcher reads 32 bits, reverses that packed integer into host memory, and
 calls `B45A70`; therefore the wire representation is `{27, joint_id_BE32}`.
 The native listener now removes supported 69-byte Joint rows transactionally
 and sends NetObj operation2/type2 to connected clients. The original handler
-returns the removed joint item through an inventory transaction. Since that
-transaction is not implemented, the native removal path is explicitly limited
-to saves whose `Game.flags` is `1` (the observed Creative mode); other modes
-are rejected. This bounded path has not yet been exercised by a live client.
+returns the removed joint item through an inventory transaction. The native
+server supports Creative and a bounded Survival path: the latter returns one
+item to the player's Container, observes the asset stack limit, and rejects
+the transaction if the inventory is full. Joints with attached controllers are
+rejected until controller removal is implemented. This path has not yet been
+exercised by a live client; slot subtype for newly created stacks is inferred
+from starter items and remains unconfirmed for these assets.
 
 ## Replication and remaining work
 

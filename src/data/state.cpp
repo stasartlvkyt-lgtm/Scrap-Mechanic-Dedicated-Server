@@ -516,6 +516,37 @@ void WorldState::spend_container_slot(std::uint32_t container_id,std::uint32_t s
     } else write_container_quantity(updated,entry_offset+quantity_offset,*available-quantity);
     replace_container_blob(container_id,std::move(updated));
 }
+std::vector<std::uint32_t> WorldState::credit_container(std::uint32_t container_id,
+    const std::array<std::uint8_t,16>& item,std::uint32_t quantity,std::uint32_t stack_size) {
+    if(!quantity||quantity==UINT32_MAX||!stack_size||stack_size==UINT32_MAX||
+       std::all_of(item.begin(),item.end(),[](auto byte){return byte==0;}))
+        throw std::invalid_argument("invalid-container-credit");
+    const auto found=impl_->container_records.find(container_id);
+    if(found==impl_->container_records.end()||!found->second.supported_layout)throw std::runtime_error("unsupported-container-layout");
+    const auto& container=found->second;auto updated=container.data;
+    // Preserve the saved item subtype where an existing stack supplies it.
+    // The native starter-inventory constructor uses 1 for new item entries;
+    // its use for newly created block stacks still needs live confirmation.
+    std::array<std::uint8_t,2> item_type{0,1};
+    for(const auto& entry:container.serialized_entries)
+        if(container_quantity(entry)!=UINT32_MAX&&std::equal(item.begin(),item.end(),entry.begin()+2)) {
+            item_type={entry[0],entry[1]};break;
+        }
+    std::vector<std::uint32_t> changed;auto remaining=quantity;
+    constexpr std::size_t header_size=9,entry_size=22,quantity_offset=18;
+    for(int pass=0;pass<2&&remaining;++pass)for(std::uint32_t slot=0;slot<container.entry_count&&remaining;++slot) {
+        const auto& entry=container.serialized_entries[slot];const auto current=container_quantity(entry);
+        const bool matching=current!=UINT32_MAX&&current<stack_size&&std::equal(item.begin(),item.end(),entry.begin()+2);
+        const bool empty=entry[0]==0xff&&entry[1]==0xff&&current==UINT32_MAX&&std::all_of(entry.begin()+2,entry.begin()+18,[](auto byte){return byte==0;});
+        if((pass==0&&!matching)||(pass==1&&!empty))continue;
+        const auto base=pass==0?current:0u;const auto add=std::min(remaining,stack_size-base);
+        const auto offset=header_size+std::size_t(slot)*entry_size;
+        if(pass==1){updated[offset]=item_type[0];updated[offset+1]=item_type[1];std::copy(item.begin(),item.end(),updated.begin()+static_cast<std::ptrdiff_t>(offset+2));}
+        write_container_quantity(updated,offset+quantity_offset,base+add);remaining-=add;changed.push_back(slot);
+    }
+    if(remaining)throw std::runtime_error("container-insufficient-space");
+    replace_container_blob(container_id,std::move(updated));return changed;
+}
 const std::set<std::uint32_t>& WorldState::container_ids() const { return impl_->container_ids; }
 const std::map<std::string, std::uint64_t>& WorldState::table_counts() const { return impl_->counts; }
 std::set<std::uint16_t> WorldState::flat_surface_worlds() const {
@@ -935,6 +966,10 @@ RemovedShapes WorldState::remove_shapes(const std::vector<std::uint32_t>& ids) {
 void WorldState::remove_joint(std::uint32_t id) {
     const auto found=impl_->joints.find(id);
     if(found==impl_->joints.end())throw std::runtime_error("unknown-joint");
+    for(const auto& [controller_id,controller]:impl_->controllers) {
+        (void)controller_id;
+        if(controller.host_type==2&&controller.host_id==id)throw std::runtime_error("joint-has-controller-reference");
+    }
     auto counts=impl_->counts;
     Transaction transaction(impl_->db.get());
     auto remove=prepare(impl_->db.get(),"DELETE FROM Joint WHERE id=?1");

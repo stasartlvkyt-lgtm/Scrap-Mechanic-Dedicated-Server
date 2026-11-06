@@ -795,9 +795,14 @@ diverged from the client. The revised cadence needs live-session confirmation.
   sent as type-4 creates. Survival BuildShape validates the player's slot,
   UUID and volume cost, atomically creates the block and spends inventory,
   then broadcasts the changed slot to same-world peers. This compiles but has
-  not been checked with a live client. Shape/joint removal and paint commands
-  remain Creative-only until their inventory costs/refunds are modeled; the
-  server rejects them in Survival rather than allowing free edits.
+  not been checked with a live client. Survival block removal now refunds the
+  selected volume using the asset's explicit stackSize. Full containers reject
+  the entire edit; changed slots and geometry replicate together. The behavior
+  has fixture coverage but remains unverified against the live game's refund
+  rules. Existing stack subtype bytes are preserved; if no matching stack
+  exists, new entries use subtype 1 as observed for starter tools, which is not
+  yet confirmed for block items. Supported joints without attached controllers
+  can also be removed with a one-item refund; paint remains Creative-only.
 - Native GameInfo now uses the selected save's `Game.flags` value for game
   mode, alongside its saved seed and live server tick. Local Survival evidence
   matches mode14; the Creative save has flags1. Custom-mode mappings are not
@@ -807,12 +812,11 @@ diverged from the client. The revised cadence needs live-session confirmation.
   triangulation, terrain edits/underground voxels, character collision, and
   physics parity remain unverified. The server still relies on captured
   bootstrap data and is not a complete Survival server.
-- Client command ID27 now decodes a Joint ID and removes supported 69-byte
-  Joint rows transactionally in Creative mode (`Game.flags == 1`). The removed
-  entity is broadcast as NetObj operation2/type2. Survival and custom modes
-  are rejected because the original command refunds a joint through an
-  inventory transaction that is not implemented. Live-client behavior is not
-  yet verified.
+- Client command ID27 removes supported 69-byte Joint rows transactionally and
+  broadcasts NetObj operation2/type2. Survival removal refunds one item using
+  the saved joint UUID and asset stack size, rejecting a full inventory and
+  joints with attached controllers. Custom modes remain unsupported; the
+  Survival path has not yet been verified against a live client.
 
 
 ## Peer liveness cleanup (2026-11-06)

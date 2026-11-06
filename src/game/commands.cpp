@@ -18,10 +18,9 @@ std::string joint_uuid(const Blob& data) {
 }
 static CommandResult apply_game_command_impl(WorldState& world,const AssetDefinitions& assets,const net::GameCommand& command, std::uint16_t world_id,std::optional<std::uint32_t> player_container_id) {
     if(const auto* remove_joint=std::get_if<net::RemoveJointCommand>(&command)) {
-        // The vanilla handler returns the joint item through an inventory
-        // transaction. Until that transaction is modeled, only expose the
-        // no-refund Creative path.
-        if(world.metadata().flags!=1)return {false,"joint-removal-requires-supported-creative-mode",{}};
+        const auto mode=world.metadata().flags;
+        if(mode!=1&&mode!=14)return {false,"joint-removal-requires-supported-game-mode",{}};
+        if(mode==14&&!player_container_id)return {false,"player-inventory-unavailable",{}};
         const auto joint=world.joints().find(remove_joint->joint_id);
         if(joint==world.joints().end())return {false,"unknown-joint",{}};
         const auto& data=joint->second.data;
@@ -40,8 +39,15 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
         }
         if(!has_world_shape)return {false,"joint-has-no-world-shape",{}};
         try {
-            world.remove_joint(remove_joint->joint_id);
             CommandResult result{true,"applied"};
+            if(mode==14) {
+                const auto* definition=assets.find(joint_uuid(data));
+                if(!definition||!definition->stack_size)return {false,"joint-stack-size-unavailable",{}};
+                std::array<std::uint8_t,16> item{};std::copy_n(data.begin()+15,16,item.begin());
+                for(const auto slot:world.credit_container(*player_container_id,item,1,*definition->stack_size))
+                    result.changed_container_slots.push_back({*player_container_id,slot});
+            }
+            world.remove_joint(remove_joint->joint_id);
             result.removed_joints.push_back(remove_joint->joint_id);
             return result;
         } catch(const std::runtime_error& error) {return {false,error.what(),{}};}
@@ -115,7 +121,9 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
         } catch(const std::runtime_error& error) {return {false,error.what(),{}};}
     }
     if(const auto* remove=std::get_if<net::RemoveShapeCommand>(&command)) {
-        if(world.metadata().flags!=1)return {false,"shape-removal-requires-supported-creative-mode",{}};
+        const auto mode=world.metadata().flags;
+        if(mode!=1&&mode!=14)return {false,"shape-removal-requires-supported-game-mode",{}};
+        if(mode==14&&!player_container_id)return {false,"player-inventory-unavailable",{}};
         const auto& selection=remove->selection;
         if(selection.kind!=4)return {false,"unsupported-selection-kind",{}};
         if(!world.bodies().contains(selection.body_id))return {false,"unknown-body",{}};
@@ -164,6 +172,30 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
                 }
             }
             CommandResult result{true,"applied"};
+            if(mode==14) {
+                struct Refund {std::array<std::uint8_t,16> item{};std::uint32_t amount{},stack_size{};};
+                std::map<std::string,Refund> refunds;
+                for(const auto shape_id:selected) {
+                    const auto geometry=decode_child_geometry(world.shapes().at(shape_id).data);
+                    if(!geometry||geometry->kind!=SavedShapeKind::block||!geometry->grid_dimensions)return {false,"survival-removal-requires-block",{}};
+                    const auto* definition=assets.find(geometry->uuid);
+                    if(!definition||!definition->block||!definition->stack_size)return {false,"block-stack-size-unavailable",{}};
+                    const auto& dimensions=partial.contains(shape_id)?partial.at(shape_id).dimensions:*geometry->grid_dimensions;
+                    std::uint64_t volume=1;for(const auto dimension:dimensions) {if(dimension<=0)return {false,"invalid-block-dimensions",{}};volume*=static_cast<std::uint32_t>(dimension);}
+                    auto& refund=refunds[geometry->uuid];
+                    if(volume>UINT32_MAX-1u-refund.amount)return {false,"block-refund-too-large",{}};
+                    refund.amount+=static_cast<std::uint32_t>(volume);refund.stack_size=*definition->stack_size;
+                    std::string hex;for(const auto c:geometry->uuid)if(c!='-')hex.push_back(c);
+                    if(hex.size()!=32)return {false,"invalid-block-uuid",{}};
+                    const auto digit=[](char c)->int {if(c>='0'&&c<='9')return c-'0';if(c>='a'&&c<='f')return c-'a'+10;if(c>='A'&&c<='F')return c-'A'+10;return -1;};
+                    for(std::size_t i=0;i<16;++i) {const auto high=digit(hex[2*i]),low=digit(hex[2*i+1]);if(high<0||low<0)return {false,"invalid-block-uuid",{}};refund.item[15-i]=std::uint8_t(high*16+low);}
+                }
+                for(const auto& [uuid,refund]:refunds) {
+                    (void)uuid;
+                    for(const auto slot:world.credit_container(*player_container_id,refund.item,refund.amount,refund.stack_size))
+                        result.changed_container_slots.push_back({*player_container_id,slot});
+                }
+            }
             for(const auto& [shape_id,cut]:partial) {
                 const auto geometry=decode_child_geometry(world.shapes().at(shape_id).data);
                 const auto split=world.split_block_shape(shape_id,cut.position,cut.dimensions,geometry->color_abgr);

@@ -27,6 +27,8 @@ struct AssetDefinition {
     std::optional<HullGeometry> hull_geometry;
     // Vanilla survival suspension length in construction-grid units.
     std::optional<std::uint32_t> survival_spring_length;
+    // Explicit maximum stack size from the game's shape definition.
+    std::optional<std::uint32_t> stack_size;
 };
 class AssetDefinitions {
 public:

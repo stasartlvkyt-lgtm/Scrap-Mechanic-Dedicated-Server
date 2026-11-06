@@ -24,7 +24,7 @@ class ListenerTests(unittest.TestCase):
     def test_callback_binary_parse(self):
         payload = bytearray(712)
         struct.pack_into("<I", payload, 0, 123)
-        1)
+        struct.pack_into("<iiQ", payload, 8, 16, 8, 1)
         struct.pack_into("<I", payload, 8 + 144, 7)
         struct.pack_into("<ii", payload, 8 + 176, 1, 0)
         struct.pack_into("<i", payload, 704, 0)
