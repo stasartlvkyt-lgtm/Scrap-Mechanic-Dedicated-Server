@@ -814,3 +814,8 @@ diverged from the client. The revised cadence needs live-session confirmation.
   inventory transaction that is not implemented. Live-client behavior is not
   yet verified.
 
+
+## Peer liveness cleanup (2026-11-06)
+
+- The native listener tracks the last inbound packet for each approved connection. A peer silent for 45 seconds enters the normal close path, which also releases its player, character, inventory request, and visibility state. This is a transport liveness guard; real-client timeout behavior has not yet been confirmed.
+

@@ -616,11 +616,17 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
         dirty_locations.clear();
     };
     std::set<Handle> deferred_close;
+    // Steam's game protocol sends periodic client traffic after joining. Keep
+    // accepted peers from occupying slots forever when that traffic stops.
+    std::map<Handle,Clock::time_point> last_peer_activity;
     unsigned movement_sequence=0;
     std::uint64_t physics_ticks=0;
     std::size_t physics_cursor=0;
     while(Clock::now()<deadline&&!std::filesystem::exists(directory/L"stop.request")){
         session.api.frame(session.pipe);Callback callback{};std::set<Handle> pending_close=std::move(deferred_close),desynchronized=pending_close;deferred_close.clear();
+        const auto activity_now=Clock::now();
+        for(const auto& [peer,last]:last_peer_activity)
+            if(activity_now-last>std::chrono::seconds(45))pending_close.insert(peer);
         for(int i=0;i<1000&&session.api.next(session.pipe,&callback);++i){
             struct Free {API& api;std::int32_t pipe;~Free(){api.free_callback(pipe);}} free{session.api,session.pipe};
             if(callback.id==1221){
@@ -664,6 +670,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
             for(int i=0;i<count;++i){
                 const auto* message=batch_messages[i];
                 if(!message||!accepted.contains(message->connection)||!allowed_peer(message->peer.steam_id()))throw std::runtime_error("Received unapproved SNS peer message");
+                last_peer_activity.insert_or_assign(message->connection,Clock::now());
                 if(desynchronized.contains(message->connection))continue;
                 if(message->size<0||message->size>16*1024*1024||(message->size&&!message->data))throw std::runtime_error("Invalid SNS message size");
                 bool control_handled=false;
@@ -934,6 +941,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
             player_worlds.erase(connection);
             active_player_locations.erase(connection);
             latest_client_ticks.erase(connection);
+            last_peer_activity.erase(connection);
             visible_players.erase(connection);visible_containers.erase(connection);for(auto& [peer,subjects]:visible_players){(void)peer;subjects.erase(connection);}
             net.close_connection(net.sockets,connection,1000,desynchronized.contains(connection)?"World update failed; reconnect to resynchronize":"scrapds probe complete",false);owned.connections.erase(connection);accepted.erase(connection);challenged.erase(connection);authenticated.erase(connection);gameinfo_sent.erase(connection);join_accepted.erase(connection);game_started.erase(connection);player_infos.erase(connection);
         }
