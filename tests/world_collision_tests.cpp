@@ -48,6 +48,7 @@ int main(int argc,char** argv){
         auto degenerate=block;degenerate.grid_dimensions[0]=0;rejected=false;try{(void)scrapds::WorldCollision::from_blocks({degenerate});}catch(const std::runtime_error&){rejected=true;}require(rejected,"degenerate collision box accepted");
         for(int i=1;i<argc;++i){
             const auto state=scrapds::WorldState::load(argv[i]);auto real=scrapds::WorldCollision::from_world(state);std::cout<<real.summary_json()<<'\n';
+            if(!state.flat_surface_worlds().empty())require(real.coverage().terrain_triangles>=2*state.flat_surface_worlds().size(),"saved Creative flat-world plane missing from character collision");
             // All-block Creative save provides independent stored RTree bounds.
             // Only static bodies are compared here: dynamic RTree records may
             // contain a wider creation/joint aggregate, not a per-body AABB.

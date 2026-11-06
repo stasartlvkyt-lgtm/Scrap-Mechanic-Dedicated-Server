@@ -99,7 +99,10 @@ Steam advertisement, but public discovery and public joins are not verified.
 `--native-physics` enables only mapped bodies and supported shapes/joints; it
 uses approximate materials and streams saved Survival heightfield cells around
 active players and bodies. It also meshes complete supported tile voxel chunks
-and applies saved `VoxelTerrain` edits to those chunks for collision. It does
+and applies saved `VoxelTerrain` edits to those chunks for collision.
+`--native-players` also streams nearby terrain into the static character
+collision scene when native body physics is off, and uses the saved Creative
+flat-world plane. It does
 not simulate all joints/controllers, the character controller, NPCs, or the
 game's Lua gameplay. Two ID25 ScriptData groups now refresh from the supplied
 save when at least three distinct keys match either the captured key set or

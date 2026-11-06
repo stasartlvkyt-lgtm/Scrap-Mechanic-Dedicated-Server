@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 
 namespace scrapds {
 namespace {
@@ -35,7 +36,7 @@ struct Scene {
     std::vector<std::unique_ptr<btBoxShape>> shapes;
     std::vector<std::unique_ptr<btCollisionObject>> objects;
     std::map<std::uint32_t, CollisionBounds> body_bounds;
-    std::map<std::pair<std::int32_t,std::int32_t>,std::unique_ptr<Terrain>> terrain;
+    std::map<std::tuple<bool,std::int32_t,std::int32_t>,std::unique_ptr<Terrain>> terrain;
     ~Scene() { for(auto& [key,item]:terrain){(void)key;world.removeCollisionObject(item->object.get());}for (auto& object : objects) world.removeCollisionObject(object.get()); }
     void add(const CollisionBlock& block) {
         if (!finite(block.body_position)) throw std::runtime_error("invalid block body position");
@@ -63,9 +64,9 @@ struct Scene {
         if(!inserted){auto& b=at->second;b.minimum={std::min(b.minimum.x,double(lo.x())),std::min(b.minimum.y,double(lo.y())),std::min(b.minimum.z,double(lo.z()))};b.maximum={std::max(b.maximum.x,double(hi.x())),std::max(b.maximum.y,double(hi.y())),std::max(b.maximum.z,double(hi.z()))};}
         shapes.push_back(std::move(shape));objects.push_back(std::move(object));world.addCollisionObject(objects.back().get());
     }
-    void add_terrain(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y,std::span<const TerrainVertex> vertices) {
+    void add_terrain(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y,std::span<const TerrainVertex> vertices,bool overworld_cell=true) {
         if(vertices.empty()||vertices.size()%3||vertices.size()>3000000)throw std::runtime_error("invalid-overworld-collision-mesh");
-        const auto key=std::pair{cell_x,cell_y};if(terrain.contains(key))throw std::runtime_error("duplicate-overworld-collision-cell");
+        const auto key=std::tuple{overworld_cell,cell_x,cell_y};if(terrain.contains(key))throw std::runtime_error("duplicate-overworld-collision-cell");
         auto value=std::make_unique<Terrain>();value->triangles=vertices.size()/3;value->mesh=std::make_unique<btTriangleMesh>();
         for(std::size_t i=0;i<vertices.size();i+=3) {
             const auto& a=vertices[i];const auto& b=vertices[i+1];const auto& c=vertices[i+2];
@@ -80,7 +81,7 @@ struct Scene {
         world.addCollisionObject(value->object.get());terrain.emplace(key,std::move(value));
     }
     void remove_terrain(std::int32_t cell_x,std::int32_t cell_y) {
-        const auto it=terrain.find({cell_x,cell_y});if(it==terrain.end())return;
+        const auto it=terrain.find({true,cell_x,cell_y});if(it==terrain.end())return;
         world.removeCollisionObject(it->second->object.get());terrain.erase(it);
     }
 };
@@ -89,6 +90,7 @@ struct WorldCollision::Impl {
     CollisionCoverage coverage;
     std::map<std::uint16_t,std::unique_ptr<Scene>> scenes;
     void add(const CollisionBlock& block){auto& scene=scenes[block.world_id];if(!scene)scene=std::make_unique<Scene>();scene->add(block);++coverage.block_boxes;coverage.worlds=scenes.size();}
+    void add_flat(std::uint16_t world_id,std::span<const TerrainVertex> vertices){auto& scene=scenes[world_id];if(!scene)scene=std::make_unique<Scene>();scene->add_terrain(world_id,0,0,vertices,false);coverage.terrain_triangles+=vertices.size()/3;coverage.worlds=scenes.size();}
 };
 WorldCollision::WorldCollision(std::unique_ptr<Impl> impl):impl_(std::move(impl)){}
 WorldCollision::WorldCollision(WorldCollision&&) noexcept=default;
@@ -116,6 +118,8 @@ WorldCollision WorldCollision::from_world(const WorldState& state){
         for(std::size_t i=0;i<4;++i)block.body_rotation_xyzw[i]=body.rotation_xyzw[i];
         p->add(block);
     }
+    const std::array<TerrainVertex,6> flat{{{-1024,-1024,0},{1024,-1024,0},{1024,1024,0},{-1024,-1024,0},{1024,1024,0},{-1024,1024,0}}};
+    for(const auto world_id:state.flat_surface_worlds())p->add_flat(world_id,flat);
     return WorldCollision(std::move(p));
 }
 const CollisionCoverage& WorldCollision::coverage()const{return impl_->coverage;}
@@ -169,11 +173,11 @@ CapsuleMotion WorldCollision::move_capsule(std::uint16_t world_id,Vec3 start,Vec
 }
 std::optional<CollisionBounds> WorldCollision::body_bounds(std::uint16_t world_id,std::uint32_t body_id)const{const auto scene=impl_->scenes.find(world_id);if(scene==impl_->scenes.end())return std::nullopt;const auto at=scene->second->body_bounds.find(body_id);if(at==scene->second->body_bounds.end())return std::nullopt;return at->second;}
 void WorldCollision::add_overworld_cell_mesh(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y,std::span<const TerrainVertex> vertices) {
-    auto& scene=impl_->scenes[world_id];if(!scene)scene=std::make_unique<Scene>();scene->add_terrain(world_id,cell_x,cell_y,vertices);
+    auto& scene=impl_->scenes[world_id];if(!scene)scene=std::make_unique<Scene>();scene->add_terrain(world_id,cell_x,cell_y,vertices,true);
     impl_->coverage.terrain_triangles+=vertices.size()/3;impl_->coverage.worlds=impl_->scenes.size();
 }
 void WorldCollision::remove_overworld_cell_mesh(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y) {
-    const auto scene=impl_->scenes.find(world_id);if(scene==impl_->scenes.end())return;const auto it=scene->second->terrain.find({cell_x,cell_y});if(it==scene->second->terrain.end())return;
+    const auto scene=impl_->scenes.find(world_id);if(scene==impl_->scenes.end())return;const auto it=scene->second->terrain.find({true,cell_x,cell_y});if(it==scene->second->terrain.end())return;
     impl_->coverage.terrain_triangles-=it->second->triangles;scene->second->remove_terrain(cell_x,cell_y);
 }
 std::string WorldCollision::summary_json()const{const auto& c=coverage();return "{\"mode\":\"decoded-block-and-resident-terrain-collision\",\"game_physics_parity\":false,\"source_shapes\":"+std::to_string(c.source_shapes)+",\"block_boxes\":"+std::to_string(c.block_boxes)+",\"terrain_triangles\":"+std::to_string(c.terrain_triangles)+",\"unsupported_parts\":"+std::to_string(c.unsupported_parts)+",\"unsupported_shapes\":"+std::to_string(c.unsupported_shapes)+",\"degenerate_blocks\":"+std::to_string(c.degenerate_blocks)+",\"unsupported_body_shapes\":"+std::to_string(c.unsupported_bodies)+",\"unsupported_joints\":"+std::to_string(c.unsupported_joints)+",\"worlds\":"+std::to_string(c.worlds)+"}";}
