@@ -118,9 +118,9 @@ Blob default_player_container(std::uint32_t id) {
         if(n!=saved.size())throw std::logic_error("invalid default inventory UUID width");
         std::reverse(saved.begin(),saved.end());
         const auto offset=std::size_t(9)+(index+2)*22;
-        data[offset]=0xff;data[offset+1]=0xff;
+        data[offset]=0;data[offset+1]=1;
         std::copy(saved.begin(),saved.end(),data.begin()+static_cast<std::ptrdiff_t>(offset+2));
-        write_container_quantity(data,offset+18,1);
+        write_container_quantity(data,offset+18,UINT32_MAX);
     }
     data.insert(data.end(),4,0);
     return data;
@@ -227,18 +227,20 @@ std::uint32_t WorldState::reserve_container_id() {
 std::uint32_t WorldState::ensure_player_inventory_container(std::uint64_t steam_id,std::uint32_t preferred_container_id) {
     if(!steam_id||steam_id>INT64_MAX)throw std::invalid_argument("invalid-player-inventory-owner");
     auto* db=impl_->db.get();Transaction transaction(db);
-    const bool had_container_table=impl_->counts.contains("Container");
     execute(db,"CREATE TABLE IF NOT EXISTS Container(id INTEGER PRIMARY KEY,data BLOB)");
     execute(db,"CREATE TABLE IF NOT EXISTS scrapds_player_inventory_v1 (steam_id INTEGER PRIMARY KEY, container_id INTEGER NOT NULL UNIQUE)");
     auto mapping=prepare(db,"SELECT container_id FROM scrapds_player_inventory_v1 WHERE steam_id=?1");
     if(sqlite3_bind_int64(mapping.get(),1,static_cast<sqlite3_int64>(steam_id))!=SQLITE_OK)fail(db,"Binding player inventory owner");
     if(step(db,mapping.get())==SQLITE_ROW) {
         const auto mapped=id(mapping.get(),0);
-        if(!impl_->container_records.contains(mapped))throw std::runtime_error("player-inventory-mapping-points-to-missing-container");
+        const auto existing=impl_->container_records.find(mapped);
+        if(existing==impl_->container_records.end()||!existing->second.supported_layout)
+            throw std::runtime_error("player-inventory-mapping-points-to-unsupported-container");
         transaction.commit();return mapped;
     }
     std::optional<std::uint32_t> selected;
-    if(preferred_container_id&&preferred_container_id!=UINT32_MAX&&impl_->container_records.contains(preferred_container_id)) {
+    if(preferred_container_id&&preferred_container_id!=UINT32_MAX&&impl_->container_records.contains(preferred_container_id)&&
+       impl_->container_records.at(preferred_container_id).supported_layout) {
         auto owner=prepare(db,"SELECT steam_id FROM scrapds_player_inventory_v1 WHERE container_id=?1");
         if(sqlite3_bind_int64(owner.get(),1,preferred_container_id)!=SQLITE_OK)fail(db,"Binding preferred player container");
         if(step(db,owner.get())==SQLITE_DONE)selected=preferred_container_id;
@@ -266,7 +268,6 @@ std::uint32_t WorldState::ensure_player_inventory_container(std::uint64_t steam_
     transaction.commit();
     impl_->container_ids.insert(*selected);impl_->container_records.emplace(*selected,std::move(record));
     impl_->counts["Container"]=containers;impl_->counts["scrapds_player_inventory_v1"]=mappings;
-    (void)had_container_table;
     return *selected;
 }
 
