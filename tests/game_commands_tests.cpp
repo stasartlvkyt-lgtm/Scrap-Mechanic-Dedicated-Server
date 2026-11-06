@@ -45,7 +45,13 @@ int main() {
         require(c.character_id==j.joint_id && c.color_rgba==j.color_rgba, "character schema wrong");
         require(serialize_game_command(c)==character, "character encoding wrong");
 
-        for (const auto& bytes : {remove,paint,joint,character}) {
+        const std::vector<std::uint8_t> harvestable{0x28,0x10,0x20,0x30,0x40};
+        const auto harvest=std::get<InteractHarvestableCommand>(parse_game_command(harvestable));
+        require(harvest.harvestable_id==0x10203040&&serialize_game_command(harvest)==harvestable,"harvestable interaction layout wrong");
+        const std::vector<std::uint8_t> character_interaction{0x29,0x50,0x60,0x70,0x80};
+        const auto interaction=std::get<InteractCharacterCommand>(parse_game_command(character_interaction));
+        require(interaction.character_id==0x50607080&&serialize_game_command(interaction)==character_interaction,"character interaction layout wrong");
+        for (const auto& bytes : {remove,paint,joint,character,harvestable,character_interaction}) {
             for (std::size_t n=0;n<bytes.size();++n)
                 rejects([&]{parse_game_command(std::span(bytes).first(n));}, "truncated command accepted");
             auto trailing=bytes;trailing.push_back(0);

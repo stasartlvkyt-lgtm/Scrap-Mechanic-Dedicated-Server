@@ -819,13 +819,13 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                 }
                 bool native_command=false;
                 const auto message_id=message->size?static_cast<const std::uint8_t*>(message->data)[0]:0;
-                if(native_world&&game_started.contains(message->connection)&&message->size>1&&((message_id>=0x22&&message_id<=0x27)||message_id==29)) {
+                if(native_world&&game_started.contains(message->connection)&&message->size>1&&((message_id>=0x22&&message_id<=0x29)||message_id==29)) {
                     try {
                         const auto plain=net::decompress_packet(std::span<const std::uint8_t>(static_cast<const std::uint8_t*>(message->data),message->size));
                         auto handle=[&](const std::vector<std::uint8_t>& p,auto&& recurse)->void {
                             if(p.empty())return;
                             if(p.front()==29) { for(const auto& part:net::split_world_aggregate(p))recurse(part,recurse);return; }
-                            if(p.front()<0x22||p.front()>0x27)return;
+                            if(p.front()<0x22||p.front()>0x29)return;
                             native_command=true;
                             const auto command=net::parse_game_command(p);
                             CommandResult result;std::vector<std::uint8_t> response;bool world_mutated=false;std::set<Handle> recipients;

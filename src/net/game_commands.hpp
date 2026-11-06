@@ -40,6 +40,14 @@ struct PaintCharacterCommand {
     std::uint32_t character_id{}, color_rgba{};
     bool operator==(const PaintCharacterCommand&) const = default;
 };
+struct InteractHarvestableCommand {
+    std::uint32_t harvestable_id{};
+    bool operator==(const InteractHarvestableCommand&) const = default;
+};
+struct InteractCharacterCommand {
+    std::uint32_t character_id{};
+    bool operator==(const InteractCharacterCommand&) const = default;
+};
 struct BuildShapeCommand {
     std::uint32_t body_id{}, child_shape_id{};
     std::uint8_t kind{}; // Observed: 2=new placement, 4=body/shape target, 8=joint target.
@@ -56,10 +64,12 @@ struct BuildShapeCommand {
     bool operator==(const BuildShapeCommand&) const = default;
 };
 using GameCommand = std::variant<RemoveShapeCommand, RemoveJointCommand, PaintShapeCommand,
-                                 PaintJointCommand, PaintCharacterCommand, BuildShapeCommand>;
+                                 PaintJointCommand, PaintCharacterCommand, InteractHarvestableCommand,
+                                 InteractCharacterCommand, BuildShapeCommand>;
 
 // Throws invalid_argument for unknown IDs or any truncated/trailing payload.
-// The codec currently covers application IDs 22-27.
+// The codec currently covers application IDs 22-29; interaction semantics are
+// build-bound and remain rejected by the gameplay layer until implemented.
 // Semantic checks (world, ownership, geometry, inventory cost) belong to game/.
 GameCommand parse_game_command(std::span<const std::uint8_t> plaintext);
 std::vector<std::uint8_t> serialize_game_command(const GameCommand& command);

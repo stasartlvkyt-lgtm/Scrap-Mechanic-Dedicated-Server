@@ -3,6 +3,8 @@
 #include <stdexcept>
 
 namespace scrapds {
+// Keep this translation unit tied to the complete GameCommand variant used by
+// the listener, including explicitly rejected interaction request types.
 net::NetObjectPacket make_object_update(const WorldState& world, const CommandResult& result,
                                         std::uint32_t tick, const net::InitialAssetCatalog& catalog) {
     net::NetObjectPacket update;

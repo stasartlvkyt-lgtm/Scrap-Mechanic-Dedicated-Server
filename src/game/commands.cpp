@@ -17,6 +17,8 @@ std::string joint_uuid(const Blob& data) {
 }
 }
 static CommandResult apply_game_command_impl(WorldState& world,const AssetDefinitions& assets,const net::GameCommand& command, std::uint16_t world_id,std::optional<std::uint32_t> player_container_id) {
+    if(std::holds_alternative<net::InteractHarvestableCommand>(command))return {false,"harvestable-interaction-not-implemented",{}};
+    if(std::holds_alternative<net::InteractCharacterCommand>(command))return {false,"character-interaction-not-implemented",{}};
     if(const auto* remove_joint=std::get_if<net::RemoveJointCommand>(&command)) {
         const auto mode=world.metadata().flags;
         if(mode!=1&&mode!=14)return {false,"joint-removal-requires-supported-game-mode",{}};

@@ -61,6 +61,10 @@ int main(){try{
     auto result=scrapds::apply_game_command(world,assets,paint);
     require(result.applied&&result.changed_shapes==std::vector<std::uint32_t>{11},"direct paint did not apply");
     require(scrapds::decode_child_geometry(world.shapes().at(11).data)->color_abgr==0xffabcdef,"paint color not persisted in native state");
+    result=scrapds::apply_game_command(world,assets,scrapds::net::InteractHarvestableCommand{123});
+    require(!result.applied&&result.reason=="harvestable-interaction-not-implemented","unsupported Harvestable interaction was accepted");
+    result=scrapds::apply_game_command(world,assets,scrapds::net::InteractCharacterCommand{456});
+    require(!result.applied&&result.reason=="character-interaction-not-implemented","unsupported Character interaction was accepted");
     auto state=scrapds::net::make_child_shape_state(world.shapes().at(11).data,214);
     auto decoded=scrapds::net::parse_net_object_packet(scrapds::net::make_net_object_packet({22,3,{state}}));
     require(decoded.records.size()==1&&decoded.records[0].payload.at(12)==0xff&&decoded.records[0].payload.at(15)==0xef,"paint replication did not carry native color");

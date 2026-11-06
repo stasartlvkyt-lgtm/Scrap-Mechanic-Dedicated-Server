@@ -103,6 +103,8 @@ GameCommand parse_game_command(std::span<const std::uint8_t> plaintext) {
         command = PaintCharacterCommand{input.word(), color};
         break;
     }
+    case 0x28: command=InteractHarvestableCommand{input.word()};break;
+    case 0x29: command=InteractCharacterCommand{input.word()};break;
     default: throw std::invalid_argument("unsupported game command ID");
     }
     input.finish();
@@ -132,6 +134,10 @@ std::vector<std::uint8_t> serialize_game_command(const GameCommand& command) {
             bytes.push_back(0x26);
             word(bytes, value.color_rgba);
             word(bytes, value.character_id);
+        } else if constexpr (std::is_same_v<Type, InteractHarvestableCommand>) {
+            bytes.push_back(0x28);word(bytes,value.harvestable_id);
+        } else if constexpr (std::is_same_v<Type, InteractCharacterCommand>) {
+            bytes.push_back(0x29);word(bytes,value.character_id);
         } else {
             bytes.push_back(0x22);
             word(bytes,std::bit_cast<std::uint32_t>(value.inventory_slot));

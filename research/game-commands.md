@@ -97,7 +97,7 @@ in both observed requests; that is a sample observation, not a semantic proof.
 
 ## Implemented codec
 
-`src/net/game_commands.hpp/.cpp` parses/serializes22–27 with exact payload
+`src/net/game_commands.hpp/.cpp` parses/serializes22–29 with exact payload
 lengths, safe integer decoding, whole-struct ordering, canonical UUID bytes,
 and unknown-command rejection. It preserves unverified BuildShape fields under
 explicit names instead of inferring values. It neither authorizes commands nor
@@ -117,6 +117,12 @@ the transaction if the inventory is full. Joints with attached controllers are
 rejected until controller removal is implemented. This path has not yet been
 exercised by a live client; slot subtype for newly created stacks is inferred
 from starter items and remains unconfirmed for these assets.
+
+IDs `28` and `29` each carry one big-endian 32-bit target ID. Their commands
+are now parsed and length-checked, then explicitly rejected by the native
+gameplay layer because Harvestable/Character interaction semantics are not
+implemented. They are consumed by the server and are not relayed to other
+clients as if they were authoritative updates.
 
 ## Replication and remaining work
 
