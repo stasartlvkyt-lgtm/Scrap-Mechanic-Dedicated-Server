@@ -624,9 +624,6 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
     std::size_t physics_cursor=0;
     while(Clock::now()<deadline&&!std::filesystem::exists(directory/L"stop.request")){
         session.api.frame(session.pipe);Callback callback{};std::set<Handle> pending_close=std::move(deferred_close),desynchronized=pending_close;deferred_close.clear();
-        const auto activity_now=Clock::now();
-        for(const auto& [peer,last]:last_peer_activity)
-            if(activity_now-last>std::chrono::seconds(45))pending_close.insert(peer);
         for(int i=0;i<1000&&session.api.next(session.pipe,&callback);++i){
             struct Free {API& api;std::int32_t pipe;~Free(){api.free_callback(pipe);}} free{session.api,session.pipe};
             if(callback.id==1221){
@@ -638,6 +635,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                 event+='}';if(events.size()<10000)events.push_back(std::move(event));
             }
         }
+        for(const auto peer:accepted)last_peer_activity.try_emplace(peer,Clock::now());
         for(const auto& outcome:inventory.poll()) {
             const auto player=player_infos.find(outcome.connection);
             const auto pending=pending_inventory_results.find(outcome.connection);
@@ -917,6 +915,16 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                 }
             }
             if(count<static_cast<int>(batch_messages.size()))break;
+        }
+        // Drain queued packets before evaluating inactivity: a delayed server
+        // tick must not disconnect a peer whose heartbeat was already waiting.
+        const auto activity_now=Clock::now();
+        for(const auto& [peer,last]:last_peer_activity) {
+            const auto limit=game_started.contains(peer)?std::chrono::seconds(45):std::chrono::seconds(120);
+            if(activity_now-last>limit) {
+                pending_close.insert(peer);
+                if(game_events.size()<10000)game_events.push_back("{\"kind\":\"peer-inactivity-timeout\",\"connection\":"+std::to_string(peer)+'}');
+            }
         }
         while(!pending_close.empty()){
             const auto connection=*pending_close.begin();pending_close.erase(pending_close.begin());

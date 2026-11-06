@@ -817,5 +817,10 @@ diverged from the client. The revised cadence needs live-session confirmation.
 
 ## Peer liveness cleanup (2026-11-06)
 
-- The native listener tracks the last inbound packet for each approved connection. A peer silent for 45 seconds enters the normal close path, which also releases its player, character, inventory request, and visibility state. This is a transport liveness guard; real-client timeout behavior has not yet been confirmed.
+- The native listener tracks accepted connections from acceptance, allowing 120 seconds before joining and 45 seconds of silence in game. It drains queued packets before checking the timeout and releases player, character, inventory request and visibility state through the normal close path. Real-client timeout behavior has not yet been confirmed.
+
+## Physics writeback and player restoration (2026-11-06)
+
+- Physics writeback updates all simulated bodies and RTree bounds in one SQLite transaction without copying the entire world. A per-world geometry version detects intervening body, shape and joint changes, and rolls back with an unsuccessful world transaction. This avoids repeated full-world comparisons each tick; performance on a live Survival server is not yet measured.
+- Player snapshot parsing consumes the appearance count before reading its entries, fixing a field offset that prevented previously saved players from being restored. The gameplay fixture now completes its spawn and restore path.
 
