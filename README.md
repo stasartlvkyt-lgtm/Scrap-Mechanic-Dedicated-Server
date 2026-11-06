@@ -120,8 +120,11 @@ Character assets and full tool/ownership authorization remain unfinished.
 Steam Inventory blobs from player-info are held out of Player replication until
 the GameServer Inventory API confirms the owning SteamID; verified blobs are
 then saved and sent as a Player update. The asynchronous Player update has not
-been checked with a live client. This does not implement Survival item
-inventory, crafting, or containers.
+been checked with a live client. Native Survival players get a persistent
+inventory container; block construction spends the server-calculated volume,
+and supported block/joint removal refunds items transactionally. Container UI
+transfers, crafting, harvestables, seating, held-tool rules, and full Survival
+item behavior remain unimplemented.
 The terrain mesh path is experimental and capped at 512 resident cells (at most
 four new cells per simulation tick). Automatic restarts and Linux deployment
 are also unfinished.
@@ -146,10 +149,9 @@ are excluded from version control. They are not included in a server package.
 - [research/steam-identity.md](research/steam-identity.md): tested anonymous login.
 - [docs/data-pack.md](docs/data-pack.md): importer and measured candidate pack.
 
-The real-client control handshake is recorded (03/04/05 and the client's first
-game byte `01`). The listener also answers with a minimum `GameInfo` (message
-id 2); a real client accepted it, logged `Version: 889 ... Connected`, and then
-sent a 41,255-byte join packet (message id 6). The next gate is the server's
-initial world synchronization response, followed by world BLOB decoding,
-collision geometry and original-physics parity. Implemented research tools
-support those gates; they do not replace them.
+Vanilla clients have reached `Start state: Game` using captured bootstrap
+data, and two Steam accounts have joined the same listener and exchanged
+character updates. The bootstrap still depends on a capture; several saved
+world managers remain unresolved, and native movement, Survival interactions,
+and physics are incomplete. See [research/status.md](research/status.md) for
+the verified scope and remaining work.
