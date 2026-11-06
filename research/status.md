@@ -791,9 +791,11 @@ diverged from the client. The revised cadence needs live-session confirmation.
   stack quantity, with `0xffffffff` observed for empty slots. `WorldState` can
   now read a matching slot and spend an exact amount transactionally while
   preserving the two opaque entry bytes and all other container data. Player
-  inventory-to-container mapping, inventory slot ownership, and live type-4
-  state replication remain unimplemented, so BuildShape does not yet use this
-  operation in Survival.
+  snapshots map to persistent containers; new containers use 30 slots and are
+  sent as type-4 creates. Survival BuildShape validates the player's slot,
+  UUID and volume cost, atomically creates the block and spends inventory,
+  then broadcasts the changed slot to same-world peers. This compiles but has
+  not been checked with a live client.
 - Native GameInfo now uses the selected save's `Game.flags` value for game
   mode, alongside its saved seed and live server tick. Local Survival evidence
   matches mode14; the Creative save has flags1. Custom-mode mappings are not

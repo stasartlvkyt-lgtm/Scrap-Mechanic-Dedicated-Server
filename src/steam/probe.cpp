@@ -784,6 +784,12 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                 for(const auto& [owner,spawn]:offline_players) {
                                     (void)owner;
                                     if(pending_close.contains(message->connection))break;
+                                    if(spawn.inventory_container_id!=UINT32_MAX&&!visible_containers[message->connection].contains(spawn.inventory_container_id)) {
+                                        if(spawn.container_creation.empty()||!send_game(message->connection,native_packet(spawn.container_creation,native_packet),"native-offline-player-container")) {
+                                            pending_close.insert(message->connection);desynchronized.insert(message->connection);break;
+                                        }
+                                        visible_containers[message->connection].insert(spawn.inventory_container_id);
+                                    }
                                     if(!send_game(message->connection,native_packet(spawn.player_before,native_packet),"native-offline-player")){pending_close.insert(message->connection);desynchronized.insert(message->connection);}
                                 }
                                 if(!pending_close.contains(message->connection)) {

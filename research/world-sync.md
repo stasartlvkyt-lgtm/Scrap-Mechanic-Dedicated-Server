@@ -184,9 +184,14 @@ BE16 entry count at offset7 and the following 22-byte records. Save samples
 cross-check bytes2..17 as the serialized item UUID and bytes18..21 as BE32
 quantity; `0xffffffff` is the observed empty-slot marker. The first two bytes
 and variable suffix remain opaque. `WorldState` can query a matching slot and
-spend a quantity transactionally without changing any opaque bytes. The owning
-player-to-container mapping and live type-4 update codec remain unresolved, so
-this persistence primitive is not yet wired to Survival BuildShape commands.
+spend a quantity transactionally without changing any opaque bytes. Player
+snapshots now map to persistent per-player containers; new players receive a
+30-slot container, and type-4 create/state records encode it for clients.
+Survival BuildShape validates the player's slot and UUID, checks block volume
+against command quantity, and creates the block while spending the stack in
+one save transaction. Changed slots are broadcast to same-world peers. This
+code compiles but still needs live-client validation; crafting and transfers
+remain unsupported.
 
 ## Reproduction and validation
 
