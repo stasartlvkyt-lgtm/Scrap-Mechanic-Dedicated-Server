@@ -50,6 +50,9 @@ namespace {
 using Clock = std::chrono::steady_clock;
 constexpr const char* expected_exe = "cf403cf9d3e465e05298c8e6082f4d664c32140ebcc4696a64200e367abb530d";
 constexpr const char* expected_dll = "4df999c0c8cb12589f0864d52be5d4c775577aeb27fee28b49b188f9ba083eea";
+// Saved Container UUID byte order is the reverse of the canonical asset UUID.
+constexpr std::array<std::uint8_t,16> paint_tool_item_saved_uuid{
+    0x5c,0x98,0xf9,0x76,0x80,0x12,0x20,0xa6,0x9d,0x43,0xe7,0x7a,0x84,0x6a,0x1c,0x73};
 using Handle = std::uint32_t;
 
 struct CharacterMotionState {
@@ -912,7 +915,25 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             const auto command=net::parse_game_command(p);
                             CommandResult result;std::vector<std::uint8_t> response;bool world_mutated=false;std::set<Handle> recipients;
                             if(const auto* paint=std::get_if<net::PaintCharacterCommand>(&command)) {
-                                if(!native_players)result={false,"character-paint-requires-native-players",{}};
+                                std::string failure;
+                                if(!native_players)failure="character-paint-requires-native-players";
+                                else if(native_world->metadata().flags!=1&&native_world->metadata().flags!=14)
+                                    failure="character-paint-requires-supported-game-mode";
+                                else if(native_world->metadata().flags==14) {
+                                    bool owns_paint_tool=false;
+                                    const auto painter=live_players.find(message->connection);
+                                    if(painter!=live_players.end()) {
+                                        const auto inventory=native_world->containers().find(painter->second.inventory_container_id);
+                                        if(inventory!=native_world->containers().end()&&inventory->second.supported_layout)
+                                            for(std::uint32_t slot=0;slot<inventory->second.entry_count;++slot) {
+                                                const auto quantity=native_world->container_slot_quantity(
+                                                    painter->second.inventory_container_id,slot,paint_tool_item_saved_uuid);
+                                                if(quantity&&*quantity>0){owns_paint_tool=true;break;}
+                                            }
+                                    }
+                                    if(!owns_paint_tool)failure="character-paint-requires-owned-paint-tool";
+                                }
+                                if(!failure.empty())result={false,std::move(failure),{}};
                                 else {
                                     auto target=std::find_if(live_players.begin(),live_players.end(),[&](const auto& item){return item.second.character_id==paint->character_id;});
                                     if(target==live_players.end())result={false,"character-not-active",{}};
