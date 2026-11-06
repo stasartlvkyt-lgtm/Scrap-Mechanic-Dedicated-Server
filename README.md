@@ -105,7 +105,10 @@ collision scene when native body physics is off. That scene includes saved
 block geometry and supported box, cylinder and hull part assets at their saved
 poses, plus the saved Creative flat-world plane. Parts with missing or
 unsupported asset geometry are counted and omitted; saved part proxies do not
-move unless native body physics is enabled. It does
+move unless native body physics is enabled. Saved-body collision is selected
+from the RTree bounds around active characters and refreshed as they cross
+128 m regions; `<output>/character-collision.json` reports loaded and culled
+geometry. It does
 not simulate all joints/controllers, the character controller, NPCs, or the
 game's Lua gameplay. Two ID25 ScriptData groups now refresh from the supplied
 save when at least three distinct keys match either the captured key set or

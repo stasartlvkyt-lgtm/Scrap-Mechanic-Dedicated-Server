@@ -20,9 +20,13 @@ struct CollisionBlock {
     Vec3 body_position;
     std::array<double, 4> body_rotation_xyzw{0, 0, 0, 1};
 };
+struct CollisionAnchor {
+    std::uint16_t world_id{};
+    double x{},y{};
+};
 struct CollisionCoverage {
     std::uint64_t source_shapes{}, block_boxes{}, part_boxes{}, part_cylinders{}, part_hulls{}, terrain_triangles{}, unsupported_parts{},
-                  unsupported_shapes{}, degenerate_blocks{}, unsupported_bodies{}, unsupported_joints{}, worlds{};
+                  unsupported_shapes{}, degenerate_blocks{}, unsupported_bodies{}, unsupported_joints{}, culled_shapes{}, culled_bodies{}, worlds{};
 };
 struct CollisionBounds { Vec3 minimum, maximum; };
 struct CollisionRayHit {
@@ -40,7 +44,11 @@ struct CapsuleMotion {
 // part assets are static at their save pose; this is not body simulation.
 class WorldCollision {
 public:
-    static WorldCollision from_world(const WorldState& state,const AssetDefinitions* assets=nullptr);
+    // Empty anchors build every saved shape for small test worlds. Large worlds
+    // require anchors and import only bodies whose saved XY bounds intersect
+    // their regions, preventing a world-sized Bullet proxy allocation.
+    static WorldCollision from_world(const WorldState& state,const AssetDefinitions* assets=nullptr,
+        std::span<const CollisionAnchor> anchors={},double region_radius=0);
     static WorldCollision from_blocks(const std::vector<CollisionBlock>& blocks);
     WorldCollision(WorldCollision&&) noexcept;
     WorldCollision& operator=(WorldCollision&&) noexcept;

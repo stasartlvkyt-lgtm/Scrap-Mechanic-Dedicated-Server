@@ -20,6 +20,7 @@
 #include <array>
 #include <bit>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <iomanip>
@@ -31,6 +32,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <thread>
+#include <tuple>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -481,7 +484,6 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
     std::optional<WorldPhysics> physics;
     std::optional<WorldCollision> character_collision;
     std::optional<OverworldTerrainStreamer> overworld_terrain;
-    if(native_players&&!native_physics)character_collision.emplace(WorldCollision::from_world(*native_world,native_assets?&*native_assets:nullptr));
     if(native_players)overworld_terrain.emplace(*native_world,game,512);
     if(native_physics) {
         for(const auto& packet:replay->post)if(!packet.empty()&&packet[0]==24) {
@@ -498,6 +500,33 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
         for(const auto& packet:replay->post)if((spawn_template=find_replay_spawn(packet)))break;
         if(!spawn_template)throw std::runtime_error("Native players require a Character spawn in replay post packets");
     }
+    using CollisionRegionKey=std::tuple<std::uint16_t,std::int64_t,std::int64_t>;
+    std::set<CollisionRegionKey> active_collision_regions;
+    auto collision_anchors=[&] {
+        constexpr double sector=128.0;
+        std::set<CollisionRegionKey> keys;
+        auto add=[&](std::uint16_t world,double x,double y) {
+            if(!std::isfinite(x)||!std::isfinite(y)||std::abs(x)>10000000||std::abs(y)>10000000)
+                throw std::runtime_error("invalid-character-collision-anchor");
+            keys.emplace(world,static_cast<std::int64_t>(std::floor(x/sector)),static_cast<std::int64_t>(std::floor(y/sector)));
+        };
+        if(spawn_template)add(spawn_template->world_id,spawn_template->position[0],spawn_template->position[1]);
+        for(const auto& [peer,location]:active_player_locations){(void)peer;add(location.world_id,location.position[0],location.position[1]);}
+        std::vector<CollisionAnchor> anchors;anchors.reserve(keys.size());
+        for(const auto& [world,x,y]:keys)anchors.push_back({world,double(x)*sector+sector*0.5,double(y)*sector+sector*0.5});
+        return std::pair{std::move(keys),std::move(anchors)};
+    };
+    auto sync_character_collision=[&](bool force) {
+        if(!native_players||native_physics)return false;
+        auto [keys,anchors]=collision_anchors();
+        if(!force&&character_collision&&keys==active_collision_regions)return false;
+        auto rebuilt=WorldCollision::from_world(*native_world,native_assets?&*native_assets:nullptr,anchors,256.0);
+        if(overworld_terrain)overworld_terrain->attach(rebuilt);
+        character_collision=std::move(rebuilt);active_collision_regions=std::move(keys);
+        write_file(directory/L"character-collision.json",character_collision->summary_json());
+        return true;
+    };
+    if(native_players&&!native_physics)sync_character_collision(true);
     if(overworld_terrain) {
         std::vector<TerrainAnchor> anchors;anchors.reserve(active_player_locations.size()+(physics?physics->bodies().size():0)+1);
         if(physics)for(const auto& body:physics->bodies())anchors.push_back({body.world_id,body.position.x,body.position.y,1});
@@ -759,7 +788,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             player_worlds.insert_or_assign(message->connection,spec.character.world_id);
                         }
                         if(send_game(message->connection,std::vector<std::uint8_t>{10},"game-start")){
-                            if(joining_location)active_player_locations.insert_or_assign(message->connection,*joining_location);
+                            if(joining_location){active_player_locations.insert_or_assign(message->connection,*joining_location);if(character_collision)try{sync_character_collision(false);}catch(const std::exception& error){std::cerr<<"scrapds: character collision region update failed: "<<error.what()<<'\n';}}
                             if(prepared){live_players.emplace(message->connection,std::move(*prepared));prepared.reset();offline_players.erase(message->peer.steam_id());}
                             if(info.inventory_kind&&!inventory_result.empty()) {
                                 const bool started=inventory.begin(message->connection,message->peer.steam_id(),inventory_result);
@@ -866,10 +895,8 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             }
                             if(result.applied)++applied_commands;else ++rejected_commands;
                             if(world_mutated&&character_collision)try {
-                                character_collision.emplace(WorldCollision::from_world(*native_world,native_assets?&*native_assets:nullptr));
-                                if(overworld_terrain)overworld_terrain->attach(*character_collision);
+                                sync_character_collision(true);
                             } catch(const std::exception& error) {
-                                character_collision.reset();
                                 std::cerr<<"scrapds: character collision disabled after world change: "<<error.what()<<'\n';
                             }
                             if(world_mutated&&physics) {
@@ -1030,6 +1057,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
             next_save=Clock::now()+std::chrono::seconds(30);
         }
         if(Clock::now()>=next_tick){
+            if(!physics&&character_collision)try{sync_character_collision(false);}catch(const std::exception& error){std::cerr<<"scrapds: character collision region update failed: "<<error.what()<<'\n';}
             if(!physics&&overworld_terrain&&character_collision)try {
                 std::vector<TerrainAnchor> anchors;anchors.reserve(active_player_locations.size());
                 for(const auto& [peer,location]:active_player_locations){(void)peer;anchors.push_back({location.world_id,location.position[0],location.position[1],0});}

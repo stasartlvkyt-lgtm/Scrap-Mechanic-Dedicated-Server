@@ -11,7 +11,9 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
+#include <string_view>
 
 namespace {
 void require(bool v,const char* text){if(!v)throw std::runtime_error(text);}
@@ -23,6 +25,11 @@ struct Temp{std::filesystem::path path=std::filesystem::temp_directory_path()/("
 }
 int main(int argc,char** argv){
     try{
+        std::filesystem::path game;std::vector<std::filesystem::path> saves;std::optional<scrapds::CollisionAnchor> around;double radius{};
+        for(int i=1;i<argc;++i){if(std::string_view(argv[i])=="--game"){if(++i>=argc)throw std::invalid_argument("--game requires an install directory");game=argv[i];}
+            else if(std::string_view(argv[i])=="--around"){if(i+4>=argc)throw std::invalid_argument("--around requires world, x, y and radius");around=scrapds::CollisionAnchor{static_cast<std::uint16_t>(std::stoul(argv[++i])),std::stod(argv[++i]),std::stod(argv[++i])};radius=std::stod(argv[++i]);}
+            else saves.emplace_back(argv[i]);}
+        std::optional<scrapds::AssetDefinitions> assets;if(!game.empty())assets=scrapds::AssetDefinitions::load(game);
         scrapds::CollisionBlock block;block.shape_id=7;block.body_id=3;block.world_id=4;block.grid_position={4,0,0};block.grid_dimensions={4,8,4};block.body_position={10,20,30};
         const auto half=std::sqrt(0.5);block.body_rotation_xyzw={0,0,half,half};
         auto second=block;second.shape_id=8;second.world_id=5;second.body_position={10,20,40};
@@ -66,22 +73,27 @@ int main(int argc,char** argv){
             require(with_parts.coverage().part_boxes==1&&with_parts.coverage().unsupported_parts==0,"supported part asset was omitted from static collision");
             const auto part_hit=with_parts.raycast(1,{-926,823.25,-0.5},{-922,823.25,-0.5});
             require(part_hit&&part_hit->shape_id==428&&part_hit->body_id==696&&close(part_hit->point.x,-924.5),"asset part collision transform is incorrect");
+            const scrapds::CollisionAnchor away{1,0,0};const auto culled=scrapds::WorldCollision::from_world(state,&assets,std::span(&away,1),1.0);
+            require(culled.coverage().culled_shapes==1&&culled.coverage().part_boxes==0&&!culled.raycast(1,{-926,823.25,-0.5},{-922,823.25,-0.5}),"regional collision imported a distant saved body");
         }
         bool rejected=false;try{scene.raycast(4,{0,0,0},{0,0,0});}catch(const std::runtime_error&){rejected=true;}require(rejected,"zero-length ray accepted");
         rejected=false;try{scene.raycast(4,{0,0,0},{1e300,0,0});}catch(const std::runtime_error&){rejected=true;}require(rejected,"out-of-range ray accepted");
         rejected=false;try{scene.sweep_capsule(4,{0,0,0},{0,0,1},0,1);}catch(const std::runtime_error&){rejected=true;}require(rejected,"zero-radius capsule accepted");
         auto degenerate=block;degenerate.grid_dimensions[0]=0;rejected=false;try{(void)scrapds::WorldCollision::from_blocks({degenerate});}catch(const std::runtime_error&){rejected=true;}require(rejected,"degenerate collision box accepted");
-        for(int i=1;i<argc;++i){
-            const auto state=scrapds::WorldState::load(argv[i]);auto real=scrapds::WorldCollision::from_world(state);std::cout<<real.summary_json()<<'\n';
+        for(const auto& save:saves){
+            const auto state=scrapds::WorldState::load(save);std::vector<scrapds::CollisionAnchor> anchors;if(around)anchors.push_back(*around);
+            auto real=around?scrapds::WorldCollision::from_world(state,assets?&*assets:nullptr,anchors,radius):scrapds::WorldCollision::from_world(state,assets?&*assets:nullptr);std::cout<<real.summary_json()<<'\n';
             if(!state.flat_surface_worlds().empty())require(real.coverage().terrain_triangles>=2*state.flat_surface_worlds().size(),"saved Creative flat-world plane missing from character collision");
             // All-block Creative save provides independent stored RTree bounds.
             // Only static bodies are compared here: dynamic RTree records may
             // contain a wider creation/joint aggregate, not a per-body AABB.
+            std::map<std::uint32_t,std::vector<const scrapds::StoredShape*>> shapes_by_body;
+            for(const auto& [shape_id,shape]:state.shapes()){(void)shape_id;shapes_by_body[shape.body_id].push_back(&shape);}
             std::size_t checked=0,mismatched=0,joint_containment=0;
             for(const auto&[id,body]:state.bodies()){
                 const auto pose=scrapds::decode_rigid_body_pose(body.data);if(!pose||!pose->is_static)continue;
-                bool all_blocks=true;std::size_t shape_count=0;
-                for(const auto&[sid,shape]:state.shapes())if(shape.body_id==id){++shape_count;const auto decoded=scrapds::decode_child_geometry(shape.data);if(!decoded||decoded->kind!=scrapds::SavedShapeKind::block)all_blocks=false;}
+                bool all_blocks=true;std::size_t shape_count=0;const auto group=shapes_by_body.find(id);
+                if(group!=shapes_by_body.end())for(const auto* shape:group->second){++shape_count;const auto decoded=scrapds::decode_child_geometry(shape->data);if(!decoded||decoded->kind!=scrapds::SavedShapeKind::block)all_blocks=false;}
                 if(!all_blocks||!shape_count||!body.prefix)continue;
                 const auto actual=real.body_bounds(body.world_id,id);if(!actual)continue;
                 const auto& expected=body.prefix->bounds_min_x_max_x_min_y_max_y;
@@ -102,9 +114,10 @@ int main(int argc,char** argv){
                 const double delta=std::max({std::abs(actual->minimum.x-expected[0]),std::abs(actual->maximum.x-expected[1]),std::abs(actual->minimum.y-expected[2]),std::abs(actual->maximum.y-expected[3])});
                 ++checked;if(delta>0.011){++mismatched;std::cout<<"bounds mismatch body "<<id<<" delta "<<delta<<'\n';}
             }
-            require(checked>0,"no static all-block bodies for bounds verification");
+            if(!around)require(checked>0,"no static all-block bodies for bounds verification");
             require(mismatched==0,"static all-block bounds differ from saved RTree");
-            std::cout<<checked<<" static body bounds match SQLite within 0.011 world units; "<<joint_containment<<" joint aggregates contain block geometry\n";
+            if(checked)std::cout<<checked<<" static body bounds match SQLite within 0.011 world units; "<<joint_containment<<" joint aggregates contain block geometry\n";
+            else if(around)std::cout<<"no selected static all-block bodies for RTree comparison in this region\n";
         }
         std::cout<<"world_collision_tests: passed\n";
     }catch(const std::exception&e){std::cerr<<e.what()<<'\n';return 1;}

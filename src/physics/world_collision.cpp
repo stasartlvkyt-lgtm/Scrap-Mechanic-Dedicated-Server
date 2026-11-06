@@ -15,6 +15,7 @@
 
 namespace scrapds {
 namespace {
+constexpr std::size_t max_unbounded_collision_shapes=100000;
 btVector3 bullet(Vec3 v) { return {btScalar(v.x), btScalar(v.y), btScalar(v.z)}; }
 Vec3 native(const btVector3& v) { return {v.x(), v.y(), v.z()}; }
 bool finite(Vec3 v) {
@@ -139,13 +140,34 @@ WorldCollision::WorldCollision(WorldCollision&&) noexcept=default;
 WorldCollision& WorldCollision::operator=(WorldCollision&&) noexcept=default;
 WorldCollision::~WorldCollision()=default;
 WorldCollision WorldCollision::from_blocks(const std::vector<CollisionBlock>& blocks){auto p=std::make_unique<Impl>();std::set<std::pair<std::uint16_t,std::uint32_t>> ids;for(const auto& block:blocks){if(!ids.emplace(block.world_id,block.shape_id).second)throw std::runtime_error("duplicate collision shape ID");p->add(block);}p->coverage.source_shapes=blocks.size();return WorldCollision(std::move(p));}
-WorldCollision WorldCollision::from_world(const WorldState& state,const AssetDefinitions* assets){
+WorldCollision WorldCollision::from_world(const WorldState& state,const AssetDefinitions* assets,
+    std::span<const CollisionAnchor> anchors,double region_radius){
+    const bool regional=!anchors.empty();
+    if(!regional&&state.shapes().size()>max_unbounded_collision_shapes)throw std::runtime_error("large-world-collision-requires-regional-anchors");
+    if(regional&&(!std::isfinite(region_radius)||region_radius<=0||region_radius>10000000))throw std::invalid_argument("invalid-saved-collision-region-radius");
+    for(const auto& anchor:anchors)if(!std::isfinite(anchor.x)||!std::isfinite(anchor.y)||std::abs(anchor.x)>10000000||std::abs(anchor.y)>10000000)
+        throw std::invalid_argument("invalid-saved-collision-anchor");
     auto p=std::make_unique<Impl>();p->coverage.source_shapes=state.shapes().size();p->coverage.unsupported_joints=state.joints().size();
     std::map<std::uint32_t,std::optional<RigidBodyPose>> poses;
     for(const auto& [id,body]:state.bodies()){
-        try{poses.emplace(id,decode_rigid_body_pose(body.data));}catch(const std::runtime_error&){poses.emplace(id,std::nullopt);}
+        std::optional<RigidBodyPose> pose;
+        try{pose=decode_rigid_body_pose(body.data);}catch(const std::runtime_error&){}
+        bool selected=!regional;
+        if(regional)for(const auto& anchor:anchors)if(anchor.world_id==body.world_id) {
+            if(body.prefix) {
+                const auto& bounds=body.prefix->bounds_min_x_max_x_min_y_max_y;
+                if(bounds[1]>=anchor.x-region_radius&&bounds[0]<=anchor.x+region_radius&&
+                   bounds[3]>=anchor.y-region_radius&&bounds[2]<=anchor.y+region_radius){selected=true;break;}
+            } else if(pose) {
+                if(std::abs(double(pose->position[0])-anchor.x)<=region_radius&&
+                   std::abs(double(pose->position[1])-anchor.y)<=region_radius){selected=true;break;}
+            } else {selected=true;break;}
+        }
+        if(!selected){++p->coverage.culled_bodies;continue;}
+        poses.emplace(id,std::move(pose));
     }
     for(const auto& [id,stored]:state.shapes()){
+        if(!poses.contains(stored.body_id)){++p->coverage.culled_shapes;continue;}
         std::optional<ShapeGeometry> shape;
         try{shape=decode_child_geometry(stored.data);}catch(const std::runtime_error&){++p->coverage.unsupported_shapes;continue;}
         if(!shape){++p->coverage.unsupported_shapes;continue;}
@@ -229,5 +251,5 @@ void WorldCollision::remove_overworld_cell_mesh(std::uint16_t world_id,std::int3
     const auto scene=impl_->scenes.find(world_id);if(scene==impl_->scenes.end())return;const auto it=scene->second->terrain.find({true,cell_x,cell_y});if(it==scene->second->terrain.end())return;
     impl_->coverage.terrain_triangles-=it->second->triangles;scene->second->remove_terrain(cell_x,cell_y);
 }
-std::string WorldCollision::summary_json()const{const auto& c=coverage();return "{\"mode\":\"decoded-block-part-and-resident-terrain-collision\",\"game_physics_parity\":false,\"source_shapes\":"+std::to_string(c.source_shapes)+",\"block_boxes\":"+std::to_string(c.block_boxes)+",\"part_boxes\":"+std::to_string(c.part_boxes)+",\"part_cylinders\":"+std::to_string(c.part_cylinders)+",\"part_hulls\":"+std::to_string(c.part_hulls)+",\"terrain_triangles\":"+std::to_string(c.terrain_triangles)+",\"unsupported_parts\":"+std::to_string(c.unsupported_parts)+",\"unsupported_shapes\":"+std::to_string(c.unsupported_shapes)+",\"degenerate_blocks\":"+std::to_string(c.degenerate_blocks)+",\"unsupported_body_shapes\":"+std::to_string(c.unsupported_bodies)+",\"unsupported_joints\":"+std::to_string(c.unsupported_joints)+",\"worlds\":"+std::to_string(c.worlds)+"}";}
+std::string WorldCollision::summary_json()const{const auto& c=coverage();return "{\"mode\":\"decoded-block-part-and-resident-terrain-collision\",\"game_physics_parity\":false,\"source_shapes\":"+std::to_string(c.source_shapes)+",\"block_boxes\":"+std::to_string(c.block_boxes)+",\"part_boxes\":"+std::to_string(c.part_boxes)+",\"part_cylinders\":"+std::to_string(c.part_cylinders)+",\"part_hulls\":"+std::to_string(c.part_hulls)+",\"terrain_triangles\":"+std::to_string(c.terrain_triangles)+",\"unsupported_parts\":"+std::to_string(c.unsupported_parts)+",\"unsupported_shapes\":"+std::to_string(c.unsupported_shapes)+",\"degenerate_blocks\":"+std::to_string(c.degenerate_blocks)+",\"unsupported_body_shapes\":"+std::to_string(c.unsupported_bodies)+",\"unsupported_joints\":"+std::to_string(c.unsupported_joints)+",\"culled_shapes\":"+std::to_string(c.culled_shapes)+",\"culled_bodies\":"+std::to_string(c.culled_bodies)+",\"worlds\":"+std::to_string(c.worlds)+"}";}
 }
