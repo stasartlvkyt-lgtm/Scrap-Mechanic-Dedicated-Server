@@ -71,6 +71,12 @@ int main() {
         catch(const std::exception& e) { throw std::runtime_error(std::string("movement: ")+e.what()); }
         if(!state.has_character_state) throw std::runtime_error("captured movement had no character state");
         if(state.character_id!=1) throw std::runtime_error("captured movement character ID mismatch");
+        const std::array<float,3> origin{};
+        if(!scrapds::net::character_displacement_violation(origin,{0.45f,0,0},0.025).empty())throw std::runtime_error("allowed horizontal motion was rejected");
+        if(scrapds::net::character_displacement_violation(origin,{0.451f,0,0},0.025)!="character-horizontal-speed-limit")throw std::runtime_error("excess horizontal motion was accepted");
+        if(!scrapds::net::character_displacement_violation(origin,{0,0,0.5f},0.025).empty())throw std::runtime_error("jump impulse displacement was rejected");
+        if(scrapds::net::character_displacement_violation(origin,{0,0,0.501f},0.025)!="character-upward-speed-limit")throw std::runtime_error("upward teleport was accepted");
+        if(scrapds::net::character_displacement_violation(origin,{0,0,-1.551f},0.025)!="character-fall-speed-limit")throw std::runtime_error("downward teleport was accepted");
         const auto server_wire=scrapds::net::make_server_character_update(movement,558600,state.tick,7);
         const auto server_decoded=scrapds::net::parse_server_character_update(server_wire);
         if(server_decoded.server_tick!=558600||server_decoded.client_tick!=state.tick||server_decoded.sequence!=7||server_decoded.character.character_id!=state.character_id||server_decoded.character.position!=state.position)

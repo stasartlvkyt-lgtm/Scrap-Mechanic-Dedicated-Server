@@ -545,11 +545,14 @@ accepted client ID30 state into unreliable server ID24 frames for other peers
 that received the corresponding Character spawn. The delta uses each receiving
 peer's latest accepted input/heartbeat tick (or zero before its first packet),
 following the receiver's acknowledgement bookkeeping; this mapping is inferred
-from `47BCC0` and still requires a live multi-client check. Horizontal speed is
-bounded; saved block geometry clips the path without native physics, while the
+from `47BCC0` and still requires a live multi-client check. Displacement is
+bounded to 6 m/s horizontally, 8 m/s upward (chosen with margin over the saved
+default `jumpImpulse: 7.0`) and 50 m/s downward, plus 0.3 m tolerance. Saved
+block geometry clips the path without native physics, while the
 current native Bullet scene clips it when native physics is enabled. Vertical
-movement and the full character controller remain client supplied, and
-multi-client gameplay confirmation remains outstanding.
+movement remains client supplied within those bounds; gravity and the full
+character controller remain unimplemented, and multi-client gameplay
+confirmation remains outstanding.
 Client loop `47BCC0` advances its runtime tick once per 25 ms. The listener now
 advances its clock once per 25 ms instead of twice per 33 ms; the old cadence
 diverged from the client. The revised cadence needs live-session confirmation.
@@ -837,6 +840,6 @@ diverged from the client. The revised cadence needs live-session confirmation.
 
 - Physics writeback updates all simulated bodies and RTree bounds in one SQLite transaction without copying the entire world. A per-world geometry version detects intervening body, shape and joint changes, and rolls back with an unsuccessful world transaction. This avoids repeated full-world comparisons each tick; performance on a live Survival server is not yet measured.
 - Player snapshot parsing consumes the appearance count before reading its entries, fixing a field offset that prevented previously saved players from being restored. The gameplay fixture now completes its spawn and restore path.
-- Accepted player displacement is swept and slid as a vertical capsule. With `--native-physics`, the current Bullet scene includes simulated rigid bodies and resident terrain; otherwise a static scene includes saved block geometry plus streamed Survival terrain and the saved Creative flat plane. This corrects client positions but does not simulate a CharacterController, gravity, jumping, falling, damage or world transitions; live-client behavior is unverified.
+- Accepted player displacement is bounded to 6 m/s horizontally, 8 m/s upward (based on default `jumpImpulse: 7.0` with margin) and 50 m/s downward, plus a 0.3 m tolerance. It is swept and slid as a vertical capsule. With `--native-physics`, the current Bullet scene includes simulated rigid bodies and resident terrain; otherwise a static scene includes saved block geometry, streamed Survival terrain and the saved Creative flat plane. This still does not simulate a CharacterController, gravity, jumps, falling or damage; live-client behavior is unverified.
 - Live Character create/state, inventory-container visibility and successful world-command updates are restricted to peers in the same saved world. Offline Player records still replicate for the player list. Multi-world visibility has build coverage only and has not been checked with multiple live clients.
 

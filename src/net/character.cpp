@@ -166,6 +166,16 @@ CharacterUpdate parse_client(std::span<const std::uint8_t> packet,std::size_t* b
 }
 }
 CharacterUpdate parse_character_update(std::span<const std::uint8_t> packet) {return parse_client(packet,nullptr,nullptr);}
+std::string character_displacement_violation(const std::array<float,3>& previous,const std::array<float,3>& current,double elapsed_seconds) {
+    if(!std::isfinite(elapsed_seconds)||elapsed_seconds<0||elapsed_seconds>10)return "invalid-character-motion-interval";
+    for(std::size_t i=0;i<3;++i)if(!std::isfinite(previous[i])||!std::isfinite(current[i]))return "nonfinite-character-position";
+    constexpr double tolerance=0.3;
+    const double dx=double(current[0])-previous[0],dy=double(current[1])-previous[1],dz=double(current[2])-previous[2];
+    if(std::hypot(dx,dy)>6.0*elapsed_seconds+tolerance)return "character-horizontal-speed-limit";
+    if(dz>8.0*elapsed_seconds+tolerance)return "character-upward-speed-limit";
+    if(dz<-(50.0*elapsed_seconds+tolerance))return "character-fall-speed-limit";
+    return {};
+}
 ServerCharacterUpdate parse_server_character_update(std::span<const std::uint8_t> packet) {
     if(packet.size()<2||packet[0]!=0x18)throw std::runtime_error("not a server character update");
     Bits bits(packet.subspan(1));ServerCharacterUpdate out;out.server_tick=bits.var21();const auto zigzag=bits.var9();

@@ -20,6 +20,10 @@ struct CharacterUpdate {
     std::array<float,3> velocity{};
     std::array<float,4> rotation{};
 };
+// Returns an explicit violation when a client displacement exceeds bounded
+// horizontal, upward-jump, or downward-fall speeds plus a small quantization margin.
+std::string character_displacement_violation(const std::array<float,3>& previous,
+    const std::array<float,3>& current,double elapsed_seconds);
 
 // Parses the observed client-to-server 0x1e stream, including type 3/4
 // transforms, acknowledgement lists, and character IDs.

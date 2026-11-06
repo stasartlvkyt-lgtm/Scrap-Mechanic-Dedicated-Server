@@ -900,12 +900,10 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                     elapsed_ticks=std::clamp(double(server_age),0.0,40.0);baseline=spawn->second.spawn_position;have_baseline=true;
                                 }
                                 if(have_baseline) {
-                                    const double allowed_distance=6.0*(elapsed_ticks*0.025)+0.3;
                                     const double dx=double(update.position[0])-baseline[0];
                                     const double dy=double(update.position[1])-baseline[1];
                                     const double dz=double(update.position[2])-baseline[2];
-                                    const double horizontal_distance=std::hypot(dx,dy);
-                                    if(horizontal_distance>allowed_distance)throw std::runtime_error("character-horizontal-speed-limit");
+                                    if(const auto violation=net::character_displacement_violation(baseline,update.position,elapsed_ticks*0.025);!violation.empty())throw std::runtime_error(violation);
                                     if((character_collision||physics)&&player_worlds.contains(message->connection)) {
                                         const Vec3 start{baseline[0],baseline[1],baseline[2]};
                                         const auto world_id=player_worlds.at(message->connection);
