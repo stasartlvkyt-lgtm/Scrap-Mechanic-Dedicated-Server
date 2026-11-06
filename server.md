@@ -1713,7 +1713,9 @@ wire (9 байт):      1E 70 <tick LE32> 00 00 00   (LZ4 block, byte 0 сохр
    клиента; синтетический Steam peer сейчас не инициализируется через
    доступную пользовательскую Steam-сессию.
 2. PaintCharacter defaults for other Character assets and tool authorization; extend the new block-collision movement guard to terrain, parts and dynamic obstacles, and verify ownership against Player state.
-3. Survival item inventory and its costs, containers, seating, held-tool state.
+3. Survival container transfers, crafting, harvestable/character actions,
+   seating и held-tool state; сверить фактические расходы/возвраты предметов
+   с игрой.
 4. Авторитетная физика персонажей и построек, серверная коррекция.
 5. Серверный LuaJIT/`sm.*`, game mode и моды.
 6. Persistence прогресса в копию сейва.
@@ -2043,10 +2045,10 @@ CharacterController, гравитацию, прыжки, падение, уро�
 разбираются, но отклоняются, пока серверная логика этих действий не готова;
 они не пересылаются другим клиентам.
 
-Для ограниченного Creative-пути добавлена команда клиента ID27: сервер
-проверяет существование Joint, его поддерживаемый формат и мир подключённых
-Shape, удаляет SQLite-строку атомарно и рассылает NetObj remove type2. В
-оригинальном обработчике удаление также возвращает предмет в инвентарь; пока
-эта транзакция не реализована, команда разрешена только для `Game.flags == 1`
-(проверенный Creative) и отклоняется в Survival и пользовательских режимах.
-Это отдельное покрытие команды, не завершённый Survival-геймплей.
+Для ограниченного пути добавлена команда клиента ID27: сервер проверяет
+существование Joint, его поддерживаемый формат, мир подключённых Shape и
+отсутствие ссылок на связанные контроллеры. В Creative команда атомарно
+удаляет SQLite-строку и рассылает NetObj remove type2. В Survival сервер
+возвращает один предмет соединения в личный Container через `stackSize` из
+asset definition и объединяет возврат с удалением в транзакцию. Fixture-тесты
+проверяют оба режима; Survival-команда всё ещё требует проверки живым клиентом.
