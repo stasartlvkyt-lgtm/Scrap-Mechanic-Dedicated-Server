@@ -788,7 +788,9 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                     visible_players[peer].insert(subject);
                                     return true;
                                 };
-                                for(const auto& [peer,spawn]:live_players)if(peer!=message->connection&&!pending_close.contains(peer))if(!send_spawn(message->connection,peer,spawn))break;
+                                for(const auto& [peer,spawn]:live_players)if(peer!=message->connection&&!pending_close.contains(peer)&&
+                                    player_worlds.contains(peer)&&player_worlds.at(peer)==player_worlds.at(message->connection))
+                                    if(!send_spawn(message->connection,peer,spawn))break;
                                 for(const auto& [owner,spawn]:offline_players) {
                                     (void)owner;
                                     if(pending_close.contains(message->connection))break;
@@ -802,7 +804,9 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                 }
                                 if(!pending_close.contains(message->connection)) {
                                     const auto& spawn=live_players.at(message->connection);
-                                    for(const auto peer:game_started)if(!pending_close.contains(peer))send_spawn(peer,message->connection,spawn);
+                                    for(const auto peer:game_started)if(!pending_close.contains(peer)&&
+                                        player_worlds.contains(peer)&&player_worlds.at(peer)==player_worlds.at(message->connection))
+                                        send_spawn(peer,message->connection,spawn);
                                 }
                             }
                         } else {if(prepared){server_characters.despawn(message->peer.steam_id());prepared.reset();}pending_close.insert(message->connection);}
