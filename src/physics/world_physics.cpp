@@ -333,6 +333,47 @@ btVector3 checked_vector(Vec3 value) {
     for(const auto component:{value.x,value.y,value.z})if(!std::isfinite(component)||std::abs(component)>std::numeric_limits<btScalar>::max())throw std::invalid_argument("invalid-physics-vector");
     return btVector3(btScalar(value.x),btScalar(value.y),btScalar(value.z));
 }
+class CapsulePenetration final : public btCollisionWorld::ContactResultCallback {
+public:
+    explicit CapsulePenetration(const btCollisionObject* subject):subject_(subject){}
+    btScalar addSingleResult(btManifoldPoint& point,
+        const btCollisionObjectWrapper* object0,int,int,
+        const btCollisionObjectWrapper* object1,int,int) override {
+        (void)object1;
+        const auto distance=double(point.getDistance());
+        if(distance>=-1e-5)return 0;
+        const auto subject_is_zero=object0->getCollisionObject()==subject_;
+        auto normal=subject_is_zero?point.m_normalWorldOnB:-point.m_normalWorldOnB;
+        if(normal.length2()<btScalar(1e-8))return 0;
+        normal.normalize();
+        if(-distance>depth){depth=-distance;outward=normal;}
+        return 0;
+    }
+    double depth{};
+    btVector3 outward{};
+private:
+    const btCollisionObject* subject_;
+};
+Vec3 recover_capsule_start(Scene& scene,Vec3 start,double radius,double cylinder_height,double skin) {
+    btCapsuleShapeZ capsule{btScalar(radius),btScalar(cylinder_height)};
+    btCollisionObject probe;probe.setCollisionShape(&capsule);
+    btTransform transform;transform.setIdentity();
+    Vec3 position=start;
+    double total=0;
+    constexpr unsigned max_recovery_iterations=8;
+    constexpr double max_recovery_distance=1.0;
+    for(unsigned i=0;i<max_recovery_iterations&&total<max_recovery_distance;++i) {
+        transform.setOrigin(checked_vector(position));probe.setWorldTransform(transform);
+        CapsulePenetration penetration(&probe);scene.world.contactTest(&probe,penetration);
+        if(penetration.depth<=0)break;
+        const auto amount=std::min({penetration.depth+skin,0.25,max_recovery_distance-total});
+        if(amount<=1e-5)break;
+        const auto correction=penetration.outward*btScalar(amount);
+        position={position.x+double(correction.x()),position.y+double(correction.y()),position.z+double(correction.z())};
+        total+=amount;
+    }
+    return position;
+}
 }
 void WorldPhysics::apply_impulse(std::uint32_t id,Vec3 impulse,Vec3 relative_position) {
     const auto force=checked_vector(impulse),position=checked_vector(relative_position);const auto it=impl_->body_index.find(id);
@@ -354,7 +395,7 @@ WorldPhysicsCapsuleMotion WorldPhysics::move_character_capsule(std::uint16_t wor
     const btScalar bullet_radius=btScalar(radius),bullet_height=btScalar(cylinder_height);
     if(bullet_radius<=0||!std::isfinite(double(bullet_radius))||!std::isfinite(double(bullet_height)))
         throw std::invalid_argument("invalid-character-capsule-dimensions");
-    btCapsuleShapeZ capsule(bullet_radius,bullet_height);Vec3 position=start,remaining=displacement;std::uint32_t contacts=0;
+    btCapsuleShapeZ capsule(bullet_radius,bullet_height);Vec3 position=recover_capsule_start(*scene->second,start,radius,cylinder_height,skin),remaining=displacement;std::uint32_t contacts=0;
     for(unsigned i=0;i<max_iterations;++i) {
         const auto length=std::sqrt(remaining.x*remaining.x+remaining.y*remaining.y+remaining.z*remaining.z);
         if(!std::isfinite(length))throw std::invalid_argument("character-capsule-motion-too-large");

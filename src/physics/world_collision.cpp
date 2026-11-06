@@ -123,6 +123,47 @@ struct Scene {
         world.removeCollisionObject(it->second->object.get());terrain.erase(it);
     }
 };
+class CapsulePenetration final : public btCollisionWorld::ContactResultCallback {
+public:
+    explicit CapsulePenetration(const btCollisionObject* subject):subject_(subject){}
+    btScalar addSingleResult(btManifoldPoint& point,
+        const btCollisionObjectWrapper* object0,int,int,
+        const btCollisionObjectWrapper* object1,int,int) override {
+        (void)object1;
+        const auto distance=double(point.getDistance());
+        if(distance>=-1e-5)return 0;
+        const auto subject_is_zero=object0->getCollisionObject()==subject_;
+        auto normal=subject_is_zero?point.m_normalWorldOnB:-point.m_normalWorldOnB;
+        if(normal.length2()<btScalar(1e-8))return 0;
+        normal.normalize();
+        if(-distance>depth){depth=-distance;outward=normal;}
+        return 0;
+    }
+    double depth{};
+    btVector3 outward{};
+private:
+    const btCollisionObject* subject_;
+};
+Vec3 recover_capsule_start(Scene& scene,Vec3 start,double radius,double cylinder_height,double skin) {
+    btCapsuleShapeZ capsule{btScalar(radius),btScalar(cylinder_height)};
+    btCollisionObject probe;probe.setCollisionShape(&capsule);
+    btTransform transform;transform.setIdentity();
+    Vec3 position=start;
+    double total=0;
+    constexpr unsigned max_recovery_iterations=8;
+    constexpr double max_recovery_distance=1.0;
+    for(unsigned i=0;i<max_recovery_iterations&&total<max_recovery_distance;++i) {
+        transform.setOrigin(bullet(position));probe.setWorldTransform(transform);
+        CapsulePenetration penetration(&probe);scene.world.contactTest(&probe,penetration);
+        if(penetration.depth<=0)break;
+        const auto amount=std::min({penetration.depth+skin,0.25,max_recovery_distance-total});
+        if(amount<=1e-5)break;
+        const auto correction=native(penetration.outward*btScalar(amount));
+        position={position.x+correction.x,position.y+correction.y,position.z+correction.z};
+        total+=amount;
+    }
+    return position;
+}
 }
 struct WorldCollision::Impl {
     CollisionCoverage coverage;
@@ -223,7 +264,8 @@ CapsuleMotion WorldCollision::move_capsule(std::uint16_t world_id,Vec3 start,Vec
         throw std::runtime_error("invalid capsule motion");
     if(!std::isfinite(radius)||!std::isfinite(cylinder_height)||radius<=0||cylinder_height<0||radius>std::numeric_limits<btScalar>::max()||cylinder_height>std::numeric_limits<btScalar>::max()||btScalar(radius)<=0)
         throw std::runtime_error("invalid capsule dimensions");
-    CapsuleMotion result{start,{}};auto remaining=displacement;
+    const auto scene=impl_->scenes.find(world_id);
+    CapsuleMotion result{scene==impl_->scenes.end()?start:recover_capsule_start(*scene->second,start,radius,cylinder_height,skin),{}};auto remaining=displacement;
     for(unsigned i=0;i<max_iterations;++i) {
         const auto length=std::sqrt(remaining.x*remaining.x+remaining.y*remaining.y+remaining.z*remaining.z);
         if(!std::isfinite(length))throw std::runtime_error("capsule motion too large");

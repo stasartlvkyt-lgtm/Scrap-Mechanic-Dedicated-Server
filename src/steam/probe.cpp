@@ -28,6 +28,7 @@
 #include <iostream>
 #include <cstdio>
 #include <iterator>
+#include <map>
 #include <optional>
 #include <set>
 #include <sstream>
@@ -50,6 +51,17 @@ using Clock = std::chrono::steady_clock;
 constexpr const char* expected_exe = "cf403cf9d3e465e05298c8e6082f4d664c32140ebcc4696a64200e367abb530d";
 constexpr const char* expected_dll = "4df999c0c8cb12589f0864d52be5d4c775577aeb27fee28b49b188f9ba083eea";
 using Handle = std::uint32_t;
+
+struct CharacterMotionState {
+    std::uint16_t world_id{};
+    Vec3 position{},velocity{};
+    std::uint32_t client_tick{};
+    bool initialized{},has_client_tick{},grounded{};
+};
+struct CharacterCapsuleResult {
+    Vec3 position{};
+    std::uint32_t contacts{};
+};
 
 // The SDK writes initialization diagnostics to stdout through both CRT and
 // native handles. Keep public-command stdout parseable as a single JSON value.
@@ -450,7 +462,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
     owned.listener=net.listen(net.sockets,0,0,nullptr);if(!owned.listener)throw std::runtime_error("Cannot create P2P listener");
     const auto started=Clock::now();
     const auto deadline=seconds==0?Clock::time_point::max():started+std::chrono::seconds(seconds);
-    std::vector<std::string> events,messages,control_events,game_events;std::set<Handle> accepted,challenged,authenticated,gameinfo_sent,join_accepted,game_started;std::map<Handle,std::uint64_t> connection_steam_ids;std::map<std::uint64_t,std::size_t> active_steam_connections;std::map<Handle,net::PlayerInfo> player_infos;std::map<Handle,std::vector<std::uint8_t>> pending_inventory_results;net::CharacterStateTracker character_states;net::ServerCharacters server_characters;std::map<Handle,PlayerSpawnPackets> live_players;
+    std::vector<std::string> events,messages,control_events,game_events;std::set<Handle> accepted,challenged,authenticated,gameinfo_sent,join_accepted,game_started;std::map<Handle,std::uint64_t> connection_steam_ids;std::map<std::uint64_t,std::size_t> active_steam_connections;std::map<Handle,net::PlayerInfo> player_infos;std::map<Handle,std::vector<std::uint8_t>> pending_inventory_results;net::CharacterStateTracker character_states;net::ServerCharacters server_characters;std::map<Handle,PlayerSpawnPackets> live_players;std::map<Handle,CharacterMotionState> character_motions;
     std::map<std::uint64_t,PlayerSpawnPackets> offline_players;
     if(native_players)for(const auto& [owner,snapshot]:native_world->player_snapshots()) {
         auto restored=restore_player_snapshot(*native_world,owner,snapshot,static_cast<std::uint32_t>(native_world->metadata().tick));
@@ -541,6 +553,22 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
         physics=std::move(rebuilt);active_collision_regions=std::move(keys);
         write_file(directory/L"physics.json",physics->summary_json());
         return true;
+    };
+    auto move_character_capsule=[&](std::uint16_t world,Vec3 start,Vec3 displacement) {
+        if(physics) {
+            const auto moved=physics->move_character_capsule(world,start,displacement,0.3,0.8);
+            return CharacterCapsuleResult{moved.position,moved.contacts};
+        }
+        if(character_collision) {
+            const auto moved=character_collision->move_capsule(world,start,displacement,0.3,0.8);
+            return CharacterCapsuleResult{moved.position,static_cast<std::uint32_t>(moved.contacts.size())};
+        }
+        return CharacterCapsuleResult{{start.x+displacement.x,start.y+displacement.y,start.z+displacement.z},0};
+    };
+    auto character_is_grounded=[&](std::uint16_t world,Vec3 position) {
+        constexpr double probe_distance=0.06;
+        const auto probe=move_character_capsule(world,position,{0,0,-probe_distance});
+        return probe.contacts>0&&position.z-probe.position.z<probe_distance-0.002;
     };
     if(native_players&&!native_physics)sync_character_collision(true);
     if(native_physics)sync_native_physics(true);
@@ -805,7 +833,15 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             player_worlds.insert_or_assign(message->connection,spec.character.world_id);
                         }
                         if(send_game(message->connection,std::vector<std::uint8_t>{10},"game-start")){
-                            if(joining_location){active_player_locations.insert_or_assign(message->connection,*joining_location);try{if(character_collision)sync_character_collision(false);else if(physics)sync_native_physics(false);}catch(const std::exception& error){std::cerr<<"scrapds: character collision region update failed: "<<error.what()<<'\n';}}
+                            if(joining_location){
+                                active_player_locations.insert_or_assign(message->connection,*joining_location);
+                                try{if(character_collision)sync_character_collision(false);else if(physics)sync_native_physics(false);}
+                                catch(const std::exception& error){std::cerr<<"scrapds: character collision region update failed: "<<error.what()<<'\n';}
+                                CharacterMotionState motion;motion.world_id=joining_location->world_id;
+                                motion.position={joining_location->position[0],joining_location->position[1],joining_location->position[2]};
+                                motion.grounded=character_is_grounded(motion.world_id,motion.position);motion.initialized=true;
+                                character_motions.insert_or_assign(message->connection,motion);
+                            }
                             if(prepared){live_players.emplace(message->connection,std::move(*prepared));prepared.reset();offline_players.erase(message->peer.steam_id());}
                             if(info.inventory_kind&&!inventory_result.empty()) {
                                 const bool started=inventory.begin(message->connection,message->peer.steam_id(),inventory_result);
@@ -935,6 +971,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                         auto update=net::parse_character_update(plain);
                         std::optional<std::array<float,3>> corrected_position;
                         std::optional<std::array<float,3>> corrected_velocity;
+                        std::optional<CharacterMotionState> accepted_motion;
                         if(update.has_character_state) {
                             if(native_players) {
                                 std::array<float,3> baseline{};double elapsed_ticks{};bool have_baseline=false;
@@ -952,40 +989,85 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                     const auto server_age=std::bit_cast<std::int32_t>(server_tick-spawn->second.spawn_server_tick);
                                     elapsed_ticks=std::clamp(double(server_age),0.0,40.0);baseline=spawn->second.spawn_position;have_baseline=true;
                                 }
-                                if(have_baseline) {
-                                    const double dx=double(update.position[0])-baseline[0];
-                                    const double dy=double(update.position[1])-baseline[1];
-                                    const double dz=double(update.position[2])-baseline[2];
-                                    const auto violation=net::character_displacement_violation(baseline,update.position,elapsed_ticks*0.025);
-                                    if(!violation.empty()) {
-                                        update.position=baseline;corrected_position=baseline;
-                                        if(update.state_type==3){update.velocity={0,0,0};corrected_velocity=update.velocity;}
-                                        if(game_events.size()<10000)game_events.push_back("{\"kind\":\"character-motion-corrected\",\"reason\":"+json_quote(violation)+",\"elapsed_seconds\":"+elapsed(started)+'}');
-                                    } else if((character_collision||physics)&&player_worlds.contains(message->connection)) {
-                                        const Vec3 start{baseline[0],baseline[1],baseline[2]};
-                                        const auto world_id=player_worlds.at(message->connection);
-                                        const Vec3 displacement{dx,dy,dz};
-                                        const auto corrected=physics
-                                            ?physics->move_character_capsule(world_id,start,displacement,0.3,0.8).position
-                                            :character_collision->move_capsule(world_id,start,displacement,0.3,0.8).position;
-                                        update.position[0]=static_cast<float>(corrected.x);
-                                        update.position[1]=static_cast<float>(corrected.y);
-                                        update.position[2]=static_cast<float>(corrected.z);
-                                        if(std::abs(corrected.x-(baseline[0]+dx))>0.002||
-                                           std::abs(corrected.y-(baseline[1]+dy))>0.002||
-                                           std::abs(corrected.z-(baseline[2]+dz))>0.002) {
+                                if(have_baseline&&player_worlds.contains(message->connection)&&(character_collision||physics)) {
+                                    const auto requested_position=update.position;
+                                    const auto requested_velocity=update.velocity;
+                                    const auto world_id=player_worlds.at(message->connection);
+                                    const std::array<float,3> horizontal_request{requested_position[0],requested_position[1],baseline[2]};
+                                    const auto violation=net::character_displacement_violation(baseline,horizontal_request,elapsed_ticks*0.025);
+                                    CharacterMotionState motion;
+                                    if(const auto current=character_motions.find(message->connection);current!=character_motions.end())motion=current->second;
+                                    if(!motion.initialized||motion.world_id!=world_id) {
+                                        motion={};motion.initialized=true;motion.world_id=world_id;
+                                        motion.position={baseline[0],baseline[1],baseline[2]};
+                                        if(const auto previous=server_characters.latest(message->peer.steam_id()))
+                                            motion.velocity={previous->velocity[0],previous->velocity[1],previous->velocity[2]};
+                                        motion.grounded=character_is_grounded(world_id,motion.position);
+                                    }
+                                    const bool duplicate_tick=motion.has_client_tick&&update.tick==motion.client_tick;
+                                    if(duplicate_tick) {
+                                        update.position={static_cast<float>(motion.position.x),static_cast<float>(motion.position.y),static_cast<float>(motion.position.z)};
+                                        if(update.state_type==3)update.velocity={static_cast<float>(motion.velocity.x),static_cast<float>(motion.velocity.y),static_cast<float>(motion.velocity.z)};
+                                        if(std::abs(motion.position.x-requested_position[0])>0.002||
+                                           std::abs(motion.position.y-requested_position[1])>0.002||
+                                           std::abs(motion.position.z-requested_position[2])>0.002)
                                             corrected_position=update.position;
-                                            if(update.state_type==3) {
-                                                const auto dt=elapsed_ticks*0.025;
-                                                for(std::size_t axis=0;axis<3;++axis)
-                                                    update.velocity[axis]=dt>0?static_cast<float>((update.position[axis]-baseline[axis])/dt):0.0f;
-                                                corrected_velocity=update.velocity;
-                                            }
+                                        if(update.state_type==3&&(
+                                            std::abs(motion.velocity.x-requested_velocity[0])>0.05||
+                                            std::abs(motion.velocity.y-requested_velocity[1])>0.05||
+                                            std::abs(motion.velocity.z-requested_velocity[2])>0.05))
+                                            corrected_velocity=update.velocity;
+                                        accepted_motion=motion;
+                                    } else {
+                                        const double dt=std::clamp(elapsed_ticks*0.025,0.0,1.0);
+                                        const Vec3 start=motion.position;
+                                        double dx=double(requested_position[0])-start.x;
+                                        double dy=double(requested_position[1])-start.y;
+                                        if(!violation.empty())dx=dy=0;
+                                        if(dt>0) {
+                                            const double distance=std::hypot(dx,dy),maximum=6.0*dt;
+                                            if(distance>maximum&&distance>0){dx*=maximum/distance;dy*=maximum/distance;}
+                                        } else dx=dy=0;
+                                        const bool grounded=motion.grounded||character_is_grounded(world_id,start);
+                                        const bool jumping=grounded&&update.state_type==3&&requested_velocity[2]>4.0f&&dt>0;
+                                        const double initial_vz=grounded?(jumping?7.0:0.0):std::clamp(motion.velocity.z,-50.0,50.0);
+                                        constexpr double gravity=9.81;
+                                        const double dz=initial_vz*dt-0.5*gravity*dt*dt;
+                                        double next_vz=std::clamp(initial_vz-gravity*dt,-50.0,50.0);
+                                        auto moved=move_character_capsule(world_id,start,{dx,dy,dz});
+                                        const double target_z=start.z+dz;
+                                        if(moved.contacts&&dz>0&&moved.position.z<target_z-0.002)next_vz=0;
+                                        bool next_grounded=false;
+                                        const auto ground_probe=move_character_capsule(world_id,moved.position,{0,0,-0.06});
+                                        if(ground_probe.contacts&&moved.position.z-ground_probe.position.z<0.058&&next_vz<=0) {
+                                            moved.position.z=ground_probe.position.z;next_vz=0;next_grounded=true;
+                                        } else if(moved.contacts&&dz<0&&moved.position.z>target_z+0.002) {
+                                            next_vz=0;next_grounded=true;
                                         }
+                                        motion.position=moved.position;
+                                        motion.velocity={dt>0?(moved.position.x-start.x)/dt:0.0,
+                                                         dt>0?(moved.position.y-start.y)/dt:0.0,next_vz};
+                                        motion.grounded=next_grounded;motion.world_id=world_id;motion.initialized=true;
+                                        motion.client_tick=update.tick;motion.has_client_tick=true;
+                                        update.position={static_cast<float>(moved.position.x),static_cast<float>(moved.position.y),static_cast<float>(moved.position.z)};
+                                        if(update.state_type==3)update.velocity={static_cast<float>(motion.velocity.x),static_cast<float>(motion.velocity.y),static_cast<float>(motion.velocity.z)};
+                                        const bool position_changed=std::abs(moved.position.x-requested_position[0])>0.002||
+                                            std::abs(moved.position.y-requested_position[1])>0.002||
+                                            std::abs(moved.position.z-requested_position[2])>0.002;
+                                        const bool velocity_changed=update.state_type==3&&(
+                                            std::abs(motion.velocity.x-requested_velocity[0])>0.05||
+                                            std::abs(motion.velocity.y-requested_velocity[1])>0.05||
+                                            std::abs(motion.velocity.z-requested_velocity[2])>0.05);
+                                        if(position_changed||!violation.empty())corrected_position=update.position;
+                                        if(update.state_type==3&&(position_changed||velocity_changed||!violation.empty()))corrected_velocity=update.velocity;
+                                        if(!violation.empty()&&game_events.size()<10000)
+                                            game_events.push_back("{\"kind\":\"character-motion-corrected\",\"reason\":"+json_quote(violation)+",\"elapsed_seconds\":"+elapsed(started)+'}');
+                                        accepted_motion=motion;
                                     }
                                 }
                             }
                             const auto rejection=native_players?server_characters.observe(message->peer.steam_id(),update):character_states.observe(message->peer.steam_id(),update);if(!rejection.empty())throw std::runtime_error(rejection);
+                            if(accepted_motion)character_motions.insert_or_assign(message->connection,*accepted_motion);
                             if(native_players) {
                                 StoredPlayerLocation location;location.world_id=player_worlds.at(message->connection);
                                 for(int axis=0;axis<3;++axis)location.position[axis]=update.position[axis];
@@ -1005,7 +1087,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                 std::int64_t number=-1;
                                 net.send(net.sockets,peer,forwarded.data(),static_cast<std::uint32_t>(forwarded.size()),0,&number);
                             }
-                            if(corrected_position&&!pending_close.contains(message->connection)) {
+                            if((corrected_position||corrected_velocity)&&!pending_close.contains(message->connection)) {
                                 const auto authoritative=net::compress_packet(net::make_server_character_update(plain,server_tick,update.tick,sequence,corrected_position,corrected_velocity));
                                 std::int64_t number=-1;
                                 if(net.send(net.sockets,message->connection,authoritative.data(),static_cast<std::uint32_t>(authoritative.size()),0,&number)!=1)
@@ -1066,6 +1148,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
             live_players.erase(connection);
             player_worlds.erase(connection);
             active_player_locations.erase(connection);
+            character_motions.erase(connection);
             latest_client_ticks.erase(connection);
             last_peer_activity.erase(connection);
             visible_players.erase(connection);visible_containers.erase(connection);for(auto& [peer,subjects]:visible_players){(void)peer;subjects.erase(connection);}
