@@ -1,6 +1,7 @@
 #include "physics/overworld_streamer.hpp"
 #include "data/state.hpp"
 #include "data/terrain.hpp"
+#include "physics/world_collision.hpp"
 #include "physics/world_physics.hpp"
 #include <algorithm>
 #include <cmath>
@@ -64,7 +65,8 @@ OverworldTerrainStreamer::OverworldTerrainStreamer(OverworldTerrainStreamer&&) n
 OverworldTerrainStreamer& OverworldTerrainStreamer::operator=(OverworldTerrainStreamer&&) noexcept=default;
 OverworldTerrainStreamer::~OverworldTerrainStreamer()=default;
 
-std::size_t OverworldTerrainStreamer::stream(WorldPhysics& physics,std::span<const TerrainAnchor> anchors,std::size_t budget) {
+template<class Scene>
+std::size_t OverworldTerrainStreamer::stream_impl(Scene& physics,std::span<const TerrainAnchor> anchors,std::size_t budget) {
     if(!budget)return 0;
     std::map<CellKey,std::pair<std::uint8_t,std::uint8_t>> targets;
     for(const auto& anchor:anchors) {
@@ -114,9 +116,14 @@ std::size_t OverworldTerrainStreamer::stream(WorldPhysics& physics,std::span<con
     }
     return added+removed;
 }
-void OverworldTerrainStreamer::attach(WorldPhysics& physics) const {
+std::size_t OverworldTerrainStreamer::stream(WorldPhysics& physics,std::span<const TerrainAnchor> anchors,std::size_t budget){return stream_impl(physics,anchors,budget);}
+std::size_t OverworldTerrainStreamer::stream(WorldCollision& collision,std::span<const TerrainAnchor> anchors,std::size_t budget){return stream_impl(collision,anchors,budget);}
+template<class Scene>
+void OverworldTerrainStreamer::attach_impl(Scene& physics) const {
     for(const auto& [key,mesh]:impl_->resident)physics.add_overworld_cell_mesh(std::get<0>(key),std::get<1>(key),std::get<2>(key),mesh);
 }
+void OverworldTerrainStreamer::attach(WorldPhysics& physics) const {attach_impl(physics);}
+void OverworldTerrainStreamer::attach(WorldCollision& collision) const {attach_impl(collision);}
 std::string OverworldTerrainStreamer::summary_json() const {
     std::size_t source_cells{};for(const auto& [id,world]:impl_->worlds){(void)id;source_cells+=world.cells.size();}
     return "{\"worlds\":"+std::to_string(impl_->worlds.size())+",\"unsupported_worlds\":"+std::to_string(impl_->unsupported_worlds)+",\"source_cells\":"+std::to_string(source_cells)+",\"terrain_delta_chunks\":"+std::to_string(impl_->deltas.size())+",\"unmapped_terrain_deltas\":"+std::to_string(impl_->unmapped_deltas)+",\"resident_cells\":"+std::to_string(impl_->resident.size())+",\"resident_voxel_cells\":"+std::to_string(impl_->voxel_resident.size())+",\"cell_limit\":"+std::to_string(impl_->limit)+",\"deferred_target_cells\":"+std::to_string(impl_->dropped_targets)+",\"unavailable_cells\":"+std::to_string(impl_->failed.size())+"}";

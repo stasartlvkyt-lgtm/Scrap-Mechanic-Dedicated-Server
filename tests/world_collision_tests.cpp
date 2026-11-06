@@ -1,6 +1,7 @@
 #include "physics/world_collision.hpp"
 #include "data/state.hpp"
 #include "data/shape_geometry.hpp"
+#include "data/terrain.hpp"
 #include <algorithm>
 #include <cmath>
 #include <iostream>
@@ -30,6 +31,13 @@ int main(int argc,char** argv){
         require(!blocked.contacts.empty()&&close(blocked.position.y,20.499,0.01)&&close(blocked.position.x,9),"capsule motion crossed a block wall");
         const auto sliding=scene.move_capsule(4,{9.5,19,30.5},{-1,4,0},0.5,1.0);
         require(!sliding.contacts.empty()&&close(sliding.position.y,20.499,0.02)&&close(sliding.position.x,8.5,0.02),"capsule did not slide along the block wall");
+        const std::vector<scrapds::TerrainVertex> ground{{-5,-5,0},{5,-5,0},{5,5,0},{-5,-5,0},{5,5,0},{-5,5,0}};
+        scene.add_overworld_cell_mesh(4,0,0,ground);
+        require(scene.coverage().terrain_triangles==2,"resident terrain coverage mismatch");
+        const auto terrain_player=scene.move_capsule(4,{0,0,3},{0,0,-4},0.3,0.8);
+        require(!terrain_player.contacts.empty()&&close(terrain_player.position.z,0.701,0.02),"capsule passed through resident overworld terrain");
+        scene.remove_overworld_cell_mesh(4,0,0);
+        require(scene.coverage().terrain_triangles==0&&scene.move_capsule(4,{0,0,3},{0,0,-4},0.3,0.8).contacts.empty(),"removed terrain remained in collision scene");
         const auto clear=scene.move_capsule(5,{9,19,30.5},{0,4,0},0.5,1.0);
         require(clear.contacts.empty()&&close(clear.position.y,23),"capsule motion changed in an empty world");
         const auto bound=scene.body_bounds(4,3);

@@ -4,11 +4,13 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace scrapds {
 class WorldState;
+struct TerrainVertex;
 struct CollisionBlock {
     std::uint32_t shape_id{}, body_id{};
     std::uint16_t world_id{};
@@ -18,7 +20,7 @@ struct CollisionBlock {
     std::array<double, 4> body_rotation_xyzw{0, 0, 0, 1};
 };
 struct CollisionCoverage {
-    std::uint64_t source_shapes{}, block_boxes{}, unsupported_parts{},
+    std::uint64_t source_shapes{}, block_boxes{}, terrain_triangles{}, unsupported_parts{},
                   unsupported_shapes{}, degenerate_blocks{}, unsupported_bodies{}, unsupported_joints{}, worlds{};
 };
 struct CollisionBounds { Vec3 minimum, maximum; };
@@ -33,7 +35,7 @@ struct CapsuleMotion {
     std::vector<CollisionRayHit> contacts;
 };
 
-// Snapshot of decoded block collision geometry. No terrain, part meshes,
+// Snapshot of decoded block collision geometry and resident static terrain. No part meshes,
 // dynamics/mass, constraints, character controllers, or gameplay simulation.
 class WorldCollision {
 public:
@@ -54,6 +56,8 @@ public:
     // Sweep and slide through this collision snapshot; initial overlaps and
     // unsupported world geometry require a separate recovery/controller path.
     CapsuleMotion move_capsule(std::uint16_t world_id, Vec3 start, Vec3 displacement,double radius,double cylinder_height,double skin=0.001,unsigned max_iterations=4) const;
+    void add_overworld_cell_mesh(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y,std::span<const TerrainVertex> vertices);
+    void remove_overworld_cell_mesh(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y);
     std::optional<CollisionBounds> body_bounds(std::uint16_t world_id, std::uint32_t body_id) const;
     std::string summary_json() const;
 private:

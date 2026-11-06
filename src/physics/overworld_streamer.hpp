@@ -9,6 +9,7 @@
 
 namespace scrapds {
 class WorldPhysics;
+class WorldCollision;
 class WorldState;
 
 struct TerrainAnchor {
@@ -31,11 +32,15 @@ public:
     // Keeps cells near supplied positions and loads at most `budget` new meshes;
     // the return value counts cells attached or detached from the scene.
     std::size_t stream(WorldPhysics& physics,std::span<const TerrainAnchor> anchors,std::size_t budget=4);
+    std::size_t stream(WorldCollision& collision,std::span<const TerrainAnchor> anchors,std::size_t budget=4);
     // Reattaches all resident meshes after a physics scene rebuild.
     void attach(WorldPhysics& physics) const;
+    void attach(WorldCollision& collision) const;
     std::string summary_json() const;
 private:
     struct Impl;
+    template<class Scene> std::size_t stream_impl(Scene& scene,std::span<const TerrainAnchor> anchors,std::size_t budget);
+    template<class Scene> void attach_impl(Scene& scene) const;
     std::unique_ptr<Impl> impl_;
 };
 }

@@ -1,6 +1,7 @@
 #include "world_collision.hpp"
 #include "data/state.hpp"
 #include "data/shape_geometry.hpp"
+#include "data/terrain.hpp"
 #include <btBulletCollisionCommon.h>
 #include <algorithm>
 #include <cmath>
@@ -20,6 +21,12 @@ bool finite(Vec3 v) {
 }
 struct Identity { std::uint32_t shape_id, body_id; std::uint16_t world_id; };
 struct Scene {
+    struct Terrain {
+        std::unique_ptr<btTriangleMesh> mesh;
+        std::unique_ptr<btBvhTriangleMeshShape> shape;
+        std::unique_ptr<btCollisionObject> object;
+        std::size_t triangles{};
+    };
     btDefaultCollisionConfiguration config;
     btCollisionDispatcher dispatcher{&config};
     btDbvtBroadphase broadphase;
@@ -28,7 +35,8 @@ struct Scene {
     std::vector<std::unique_ptr<btBoxShape>> shapes;
     std::vector<std::unique_ptr<btCollisionObject>> objects;
     std::map<std::uint32_t, CollisionBounds> body_bounds;
-    ~Scene() { for (auto& object : objects) world.removeCollisionObject(object.get()); }
+    std::map<std::pair<std::int32_t,std::int32_t>,std::unique_ptr<Terrain>> terrain;
+    ~Scene() { for(auto& [key,item]:terrain){(void)key;world.removeCollisionObject(item->object.get());}for (auto& object : objects) world.removeCollisionObject(object.get()); }
     void add(const CollisionBlock& block) {
         if (!finite(block.body_position)) throw std::runtime_error("invalid block body position");
         double norm=0;
@@ -54,6 +62,26 @@ struct Scene {
         auto [at,inserted]=body_bounds.emplace(block.body_id,CollisionBounds{native(lo),native(hi)});
         if(!inserted){auto& b=at->second;b.minimum={std::min(b.minimum.x,double(lo.x())),std::min(b.minimum.y,double(lo.y())),std::min(b.minimum.z,double(lo.z()))};b.maximum={std::max(b.maximum.x,double(hi.x())),std::max(b.maximum.y,double(hi.y())),std::max(b.maximum.z,double(hi.z()))};}
         shapes.push_back(std::move(shape));objects.push_back(std::move(object));world.addCollisionObject(objects.back().get());
+    }
+    void add_terrain(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y,std::span<const TerrainVertex> vertices) {
+        if(vertices.empty()||vertices.size()%3||vertices.size()>3000000)throw std::runtime_error("invalid-overworld-collision-mesh");
+        const auto key=std::pair{cell_x,cell_y};if(terrain.contains(key))throw std::runtime_error("duplicate-overworld-collision-cell");
+        auto value=std::make_unique<Terrain>();value->triangles=vertices.size()/3;value->mesh=std::make_unique<btTriangleMesh>();
+        for(std::size_t i=0;i<vertices.size();i+=3) {
+            const auto& a=vertices[i];const auto& b=vertices[i+1];const auto& c=vertices[i+2];
+            for(const auto& v:{a,b,c})for(const auto n:{v.x,v.y,v.z})if(!std::isfinite(n)||std::abs(double(n))>std::numeric_limits<btScalar>::max())throw std::runtime_error("invalid-overworld-collision-vertex");
+            value->mesh->addTriangle({a.x,a.y,a.z},{b.x,b.y,b.z},{c.x,c.y,c.z},true);
+        }
+        value->shape=std::make_unique<btBvhTriangleMeshShape>(value->mesh.get(),true,true);
+        value->object=std::make_unique<btCollisionObject>();value->object->setCollisionShape(value->shape.get());
+        value->object->setWorldTransform(btTransform::getIdentity());
+        identities.push_back({UINT32_MAX,UINT32_MAX,world_id});
+        value->object->setUserPointer(&identities.back());
+        world.addCollisionObject(value->object.get());terrain.emplace(key,std::move(value));
+    }
+    void remove_terrain(std::int32_t cell_x,std::int32_t cell_y) {
+        const auto it=terrain.find({cell_x,cell_y});if(it==terrain.end())return;
+        world.removeCollisionObject(it->second->object.get());terrain.erase(it);
     }
 };
 }
@@ -140,5 +168,13 @@ CapsuleMotion WorldCollision::move_capsule(std::uint16_t world_id,Vec3 start,Vec
     return result;
 }
 std::optional<CollisionBounds> WorldCollision::body_bounds(std::uint16_t world_id,std::uint32_t body_id)const{const auto scene=impl_->scenes.find(world_id);if(scene==impl_->scenes.end())return std::nullopt;const auto at=scene->second->body_bounds.find(body_id);if(at==scene->second->body_bounds.end())return std::nullopt;return at->second;}
-std::string WorldCollision::summary_json()const{const auto& c=coverage();return "{\"mode\":\"decoded-block-collision-only\",\"game_physics_parity\":false,\"source_shapes\":"+std::to_string(c.source_shapes)+",\"block_boxes\":"+std::to_string(c.block_boxes)+",\"unsupported_parts\":"+std::to_string(c.unsupported_parts)+",\"unsupported_shapes\":"+std::to_string(c.unsupported_shapes)+",\"degenerate_blocks\":"+std::to_string(c.degenerate_blocks)+",\"unsupported_body_shapes\":"+std::to_string(c.unsupported_bodies)+",\"unsupported_joints\":"+std::to_string(c.unsupported_joints)+",\"worlds\":"+std::to_string(c.worlds)+"}";}
+void WorldCollision::add_overworld_cell_mesh(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y,std::span<const TerrainVertex> vertices) {
+    auto& scene=impl_->scenes[world_id];if(!scene)scene=std::make_unique<Scene>();scene->add_terrain(world_id,cell_x,cell_y,vertices);
+    impl_->coverage.terrain_triangles+=vertices.size()/3;impl_->coverage.worlds=impl_->scenes.size();
+}
+void WorldCollision::remove_overworld_cell_mesh(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y) {
+    const auto scene=impl_->scenes.find(world_id);if(scene==impl_->scenes.end())return;const auto it=scene->second->terrain.find({cell_x,cell_y});if(it==scene->second->terrain.end())return;
+    impl_->coverage.terrain_triangles-=it->second->triangles;scene->second->remove_terrain(cell_x,cell_y);
+}
+std::string WorldCollision::summary_json()const{const auto& c=coverage();return "{\"mode\":\"decoded-block-and-resident-terrain-collision\",\"game_physics_parity\":false,\"source_shapes\":"+std::to_string(c.source_shapes)+",\"block_boxes\":"+std::to_string(c.block_boxes)+",\"terrain_triangles\":"+std::to_string(c.terrain_triangles)+",\"unsupported_parts\":"+std::to_string(c.unsupported_parts)+",\"unsupported_shapes\":"+std::to_string(c.unsupported_shapes)+",\"degenerate_blocks\":"+std::to_string(c.degenerate_blocks)+",\"unsupported_body_shapes\":"+std::to_string(c.unsupported_bodies)+",\"unsupported_joints\":"+std::to_string(c.unsupported_joints)+",\"worlds\":"+std::to_string(c.worlds)+"}";}
 }

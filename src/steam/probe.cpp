@@ -482,6 +482,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
     std::optional<WorldCollision> character_collision;
     std::optional<OverworldTerrainStreamer> overworld_terrain;
     if(native_players&&!native_physics)character_collision.emplace(WorldCollision::from_world(*native_world));
+    if(native_players)overworld_terrain.emplace(*native_world,game,512);
     if(native_physics) {
         for(const auto& packet:replay->post)if(!packet.empty()&&packet[0]==24) {
             try {for(const auto& body:net::extract_server_body_updates(packet))physics_flags.insert_or_assign(body.body_id,body.flags);}
@@ -490,7 +491,6 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
         for(const auto& [id,flags]:physics_flags){(void)flags;mapped_physics_bodies.insert(id);}
         physics.emplace(WorldPhysics::from_world(*native_world,1000.0,&mapped_physics_bodies,&*native_assets));
         if(!physics->coverage().dynamic_bodies)throw std::runtime_error("Native physics found no supported dynamic bodies with captured runtime flags");
-        overworld_terrain.emplace(*native_world,game,512);
         write_file(directory/L"physics.json",physics->summary_json());
     }
     std::optional<net::CharacterCreation> spawn_template;
@@ -498,11 +498,12 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
         for(const auto& packet:replay->post)if((spawn_template=find_replay_spawn(packet)))break;
         if(!spawn_template)throw std::runtime_error("Native players require a Character spawn in replay post packets");
     }
-    if(overworld_terrain&&physics) {
-        std::vector<TerrainAnchor> anchors;anchors.reserve(physics->bodies().size()+1);
-        for(const auto& body:physics->bodies())anchors.push_back({body.world_id,body.position.x,body.position.y,1});
+    if(overworld_terrain) {
+        std::vector<TerrainAnchor> anchors;anchors.reserve(active_player_locations.size()+(physics?physics->bodies().size():0)+1);
+        if(physics)for(const auto& body:physics->bodies())anchors.push_back({body.world_id,body.position.x,body.position.y,1});
         if(spawn_template)anchors.push_back({spawn_template->world_id,spawn_template->position[0],spawn_template->position[1],0});
-        overworld_terrain->stream(*physics,anchors,32);
+        if(physics)overworld_terrain->stream(*physics,anchors,32);
+        else if(character_collision)overworld_terrain->stream(*character_collision,anchors,32);
         write_file(directory/L"overworld-terrain.json",overworld_terrain->summary_json());
     }
     std::optional<net::InitialAssetCatalog> native_catalog;
@@ -859,6 +860,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             if(result.applied)++applied_commands;else ++rejected_commands;
                             if(world_mutated&&character_collision)try {
                                 character_collision.emplace(WorldCollision::from_world(*native_world));
+                                if(overworld_terrain)overworld_terrain->attach(*character_collision);
                             } catch(const std::exception& error) {
                                 character_collision.reset();
                                 std::cerr<<"scrapds: character collision disabled after world change: "<<error.what()<<'\n';
@@ -1014,6 +1016,11 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
             next_save=Clock::now()+std::chrono::seconds(30);
         }
         if(Clock::now()>=next_tick){
+            if(!physics&&overworld_terrain&&character_collision)try {
+                std::vector<TerrainAnchor> anchors;anchors.reserve(active_player_locations.size());
+                for(const auto& [peer,location]:active_player_locations){(void)peer;anchors.push_back({location.world_id,location.position[0],location.position[1],0});}
+                if(overworld_terrain->stream(*character_collision,anchors,4))write_file(directory/L"overworld-terrain.json",overworld_terrain->summary_json());
+            }catch(const std::exception& error){std::cerr<<"scrapds: character terrain stream failed: "<<error.what()<<'\n';}
             if(physics)try {
                 if(overworld_terrain) {
                     std::vector<TerrainAnchor> anchors;anchors.reserve(active_player_locations.size()+physics->bodies().size()+1);
