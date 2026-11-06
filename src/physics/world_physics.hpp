@@ -18,8 +18,9 @@ class AssetDefinitions;
 struct TerrainVertex;
 struct OverworldCell;
 struct OverworldTerrain;
+struct PhysicsRegionAnchor { std::uint16_t world_id{}; double x{},y{}; };
 struct WorldPhysicsCoverage {
-    std::uint64_t source_bodies{}, static_bodies{}, dynamic_bodies{}, box_parts{}, cylinder_parts{}, hull_parts{}, bearing_joints{}, spring_joints{}, passive_controllers{}, skipped_geometry{}, skipped_joint{}, skipped_controller{}, skipped_unmapped{}, skipped_invalid{}, terrain_chunks{}, terrain_triangles{}, flat_surface_worlds{};
+    std::uint64_t source_bodies{}, static_bodies{}, dynamic_bodies{}, box_parts{}, cylinder_parts{}, hull_parts{}, bearing_joints{}, spring_joints{}, passive_controllers{}, skipped_geometry{}, skipped_joint{}, skipped_controller{}, skipped_unmapped{}, skipped_invalid{}, culled_static_bodies{}, culled_shapes{}, terrain_chunks{}, terrain_triangles{}, flat_surface_worlds{};
 };
 struct WorldPhysicsBody {
     std::uint32_t id{};
@@ -33,9 +34,15 @@ struct WorldPhysicsCapsuleMotion { Vec3 position; std::uint32_t contacts{}; };
 // Experimental Bullet simulation of complete supported bodies, free bearings
 // and supported suspension groups. Material parameters are approximate;
 // non-flat world terrain, motors and unsupported joints remain excluded.
+// With region anchors, saved static bodies are filtered by RTree bounds while
+// mapped dynamic bodies remain loaded independently of their region.
 class WorldPhysics {
 public:
-    static WorldPhysics from_world(const WorldState& state,double density=1000.0,const std::set<std::uint32_t>* mapped_dynamic_ids=nullptr,const AssetDefinitions* assets=nullptr);
+    // Large worlds require static regions; dynamic bodies in mapped_dynamic_ids
+    // are included, and their saved poses also seed static collision regions.
+    static WorldPhysics from_world(const WorldState& state,double density=1000.0,
+        const std::set<std::uint32_t>* mapped_dynamic_ids=nullptr,const AssetDefinitions* assets=nullptr,
+        std::span<const PhysicsRegionAnchor> static_regions={},double region_radius=0);
     WorldPhysics(WorldPhysics&&) noexcept;
     WorldPhysics& operator=(WorldPhysics&&) noexcept;
     ~WorldPhysics();

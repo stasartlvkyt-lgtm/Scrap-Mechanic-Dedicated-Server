@@ -9,6 +9,7 @@
 #include "net/world_sync.hpp"
 #include "data/state.hpp"
 #include "data/assets.hpp"
+#include "data/shape_geometry.hpp"
 #include "game/commands.hpp"
 #include "game/replication.hpp"
 #include "game/player_spawn.hpp"
@@ -491,9 +492,6 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
             catch(const std::runtime_error&) {} // A malformed replay frame supplies no runtime flags.
         }
         for(const auto& [id,flags]:physics_flags){(void)flags;mapped_physics_bodies.insert(id);}
-        physics.emplace(WorldPhysics::from_world(*native_world,1000.0,&mapped_physics_bodies,&*native_assets));
-        if(!physics->coverage().dynamic_bodies)throw std::runtime_error("Native physics found no supported dynamic bodies with captured runtime flags");
-        write_file(directory/L"physics.json",physics->summary_json());
     }
     std::optional<net::CharacterCreation> spawn_template;
     if(native_players) {
@@ -512,6 +510,11 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
         };
         if(spawn_template)add(spawn_template->world_id,spawn_template->position[0],spawn_template->position[1]);
         for(const auto& [peer,location]:active_player_locations){(void)peer;add(location.world_id,location.position[0],location.position[1]);}
+        if(native_physics)for(const auto id:mapped_physics_bodies) {
+            const auto body=native_world->bodies().find(id);if(body==native_world->bodies().end())continue;
+            try{const auto pose=decode_rigid_body_pose(body->second.data);if(pose&&!pose->is_static)add(pose->world_id,pose->position[0],pose->position[1]);}
+            catch(const std::runtime_error&) {}
+        }
         std::vector<CollisionAnchor> anchors;anchors.reserve(keys.size());
         for(const auto& [world,x,y]:keys)anchors.push_back({world,double(x)*sector+sector*0.5,double(y)*sector+sector*0.5});
         return std::pair{std::move(keys),std::move(anchors)};
@@ -526,7 +529,21 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
         write_file(directory/L"character-collision.json",character_collision->summary_json());
         return true;
     };
+    auto sync_native_physics=[&](bool force) {
+        if(!native_physics)return false;
+        auto [keys,anchors]=collision_anchors();
+        if(!force&&physics&&keys==active_collision_regions)return false;
+        std::vector<PhysicsRegionAnchor> regions;regions.reserve(anchors.size());
+        for(const auto& anchor:anchors)regions.push_back({anchor.world_id,anchor.x,anchor.y});
+        auto rebuilt=WorldPhysics::from_world(*native_world,1000.0,&mapped_physics_bodies,&*native_assets,regions,256.0);
+        if(!rebuilt.coverage().dynamic_bodies)throw std::runtime_error("Native physics found no supported dynamic bodies with captured runtime flags");
+        if(overworld_terrain)overworld_terrain->attach(rebuilt);
+        physics=std::move(rebuilt);active_collision_regions=std::move(keys);
+        write_file(directory/L"physics.json",physics->summary_json());
+        return true;
+    };
     if(native_players&&!native_physics)sync_character_collision(true);
+    if(native_physics)sync_native_physics(true);
     if(overworld_terrain) {
         std::vector<TerrainAnchor> anchors;anchors.reserve(active_player_locations.size()+(physics?physics->bodies().size():0)+1);
         if(physics)for(const auto& body:physics->bodies())anchors.push_back({body.world_id,body.position.x,body.position.y,1});
@@ -788,7 +805,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             player_worlds.insert_or_assign(message->connection,spec.character.world_id);
                         }
                         if(send_game(message->connection,std::vector<std::uint8_t>{10},"game-start")){
-                            if(joining_location){active_player_locations.insert_or_assign(message->connection,*joining_location);if(character_collision)try{sync_character_collision(false);}catch(const std::exception& error){std::cerr<<"scrapds: character collision region update failed: "<<error.what()<<'\n';}}
+                            if(joining_location){active_player_locations.insert_or_assign(message->connection,*joining_location);try{if(character_collision)sync_character_collision(false);else if(physics)sync_native_physics(false);}catch(const std::exception& error){std::cerr<<"scrapds: character collision region update failed: "<<error.what()<<'\n';}}
                             if(prepared){live_players.emplace(message->connection,std::move(*prepared));prepared.reset();offline_players.erase(message->peer.steam_id());}
                             if(info.inventory_kind&&!inventory_result.empty()) {
                                 const bool started=inventory.begin(message->connection,message->peer.steam_id(),inventory_result);
@@ -897,16 +914,11 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             if(world_mutated&&character_collision)try {
                                 sync_character_collision(true);
                             } catch(const std::exception& error) {
+                                character_collision.reset();active_collision_regions.clear();
+                                try{write_file(directory/L"character-collision.json","{\"active\":false,\"error\":"+json_quote(error.what())+'}');}catch(const std::exception&) {}
                                 std::cerr<<"scrapds: character collision disabled after world change: "<<error.what()<<'\n';
                             }
-                            if(world_mutated&&physics) {
-                                try {
-                                    auto rebuilt=WorldPhysics::from_world(*native_world,1000.0,&mapped_physics_bodies,&*native_assets);
-                                    if(overworld_terrain)overworld_terrain->attach(rebuilt);
-                                    physics=std::move(rebuilt);
-                                    write_file(directory/L"physics.json",physics->summary_json());
-                                } catch(const std::exception& e){physics.reset();std::cerr<<"scrapds: physics disabled after world change: "<<e.what()<<'\n';try{write_file(directory/L"physics.json","{\"active\":false,\"error\":"+json_quote(e.what())+'}');}catch(const std::exception&) {}}
-                            }
+                            if(world_mutated&&physics)try{sync_native_physics(true);}catch(const std::exception& e){physics.reset();active_collision_regions.clear();try{write_file(directory/L"physics.json","{\"active\":false,\"error\":"+json_quote(e.what())+'}');}catch(const std::exception&) {}std::cerr<<"scrapds: physics region rebuild failed after world change: "<<e.what()<<'\n';}
                             if(!response.empty()) {
                                 if(recipients.empty()&&!native_players)recipients=game_started;
                                 net::deliver_world_update(recipients,pending_close,desynchronized,[&](Handle peer){return send_game(peer,response,result.reason=="applied"&&std::holds_alternative<net::PaintCharacterCommand>(command)?"native-character-paint":"native-object-update");});
@@ -1057,7 +1069,8 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
             next_save=Clock::now()+std::chrono::seconds(30);
         }
         if(Clock::now()>=next_tick){
-            if(!physics&&character_collision)try{sync_character_collision(false);}catch(const std::exception& error){std::cerr<<"scrapds: character collision region update failed: "<<error.what()<<'\n';}
+            if(!physics&&native_players)try{sync_character_collision(false);}catch(const std::exception& error){std::cerr<<"scrapds: character collision region update failed: "<<error.what()<<'\n';}
+            if(physics)try{sync_native_physics(false);}catch(const std::exception& error){std::cerr<<"scrapds: physics region update failed: "<<error.what()<<'\n';}
             if(!physics&&overworld_terrain&&character_collision)try {
                 std::vector<TerrainAnchor> anchors;anchors.reserve(active_player_locations.size());
                 for(const auto& [peer,location]:active_player_locations){(void)peer;anchors.push_back({location.world_id,location.position[0],location.position[1],0});}

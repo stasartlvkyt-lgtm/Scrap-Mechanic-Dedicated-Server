@@ -11,7 +11,9 @@
 #include <filesystem>
 #include <iostream>
 #include <fstream>
+#include <span>
 #include <stdexcept>
+#include <string_view>
 
 namespace {
 void require(bool value,const char* message){if(!value)throw std::runtime_error(message);}
@@ -86,6 +88,9 @@ int main(int argc,char** argv){try {
     const std::set<std::uint32_t> unmapped;
     auto filtered=scrapds::WorldPhysics::from_world(world,1000.0,&unmapped,&assets);
     require(filtered.coverage().dynamic_bodies==0&&filtered.coverage().skipped_unmapped==1&&filtered.coverage().static_bodies==4,"network-unmapped dynamic body was simulated");
+    const std::set<std::uint32_t> locally_mapped{2};const scrapds::PhysicsRegionAnchor local_region{0,0,0};
+    auto regional=scrapds::WorldPhysics::from_world(world,1000.0,&locally_mapped,&assets,std::span(&local_region,1),6.0);
+    require(regional.coverage().static_bodies==1&&regional.coverage().dynamic_bodies==1&&regional.coverage().culled_static_bodies==3&&regional.coverage().culled_shapes==4&&regional.bounds(1)&&!regional.bounds(4),"regional physics did not keep only nearby static bodies and mapped dynamics");
     auto impulse_test=scrapds::WorldPhysics::from_world(world);
     impulse_test.apply_impulse(2,{1000,0,0});
     require(std::abs(impulse_test.bodies().at(0).velocity.x-1.0)<0.001,"impulse did not use body mass");
@@ -153,7 +158,7 @@ int main(int argc,char** argv){try {
     soft_spring.apply_impulse(3,{-300,0,0});stiff_spring.apply_impulse(3,{-300,0,0});soft_spring.step(20);stiff_spring.step(20);
     const auto soft_bodies=soft_spring.bodies(),stiff_bodies=stiff_spring.bodies();
     require(stiff_bodies[1].position.x-stiff_bodies[0].position.x>soft_bodies[1].position.x-soft_bodies[0].position.x+0.005,"saved suspension stiffness did not affect motion");
-    if(argc>=3) {
+    if(argc>=3&&std::string_view(argv[1])!="--regional") {
         const auto tables=scrapds::TerrainMeshTables::from_game_executable(std::filesystem::path(argv[2])/"Release/ScrapMechanic.exe");
         std::array<std::uint8_t,4913> plane{};for(int x=0;x<17;++x)for(int y=0;y<17;++y)for(int z=1;z<17;++z)plane[17*(y+17*x)+z]=31;
         const auto triangles=scrapds::mesh_terrain_chunk(plane,{3,0,0},tables);auto real_mesh_world=scrapds::WorldState::load(path);
@@ -181,7 +186,7 @@ int main(int argc,char** argv){try {
         require(checked>=5,"too few captured part examples");
         std::cout<<"captured part bounds verified\n";
     }
-    if(argc==4) {
+    if(argc==4&&std::string_view(argv[1])!="--regional") {
         const auto real_world=scrapds::WorldState::load(argv[3]);const auto real_assets=scrapds::AssetDefinitions::load(argv[2]);
         const auto real_physics=scrapds::WorldPhysics::from_world(real_world,1000,nullptr,&real_assets);
         for(const auto id:{1u,7u,23u,24u,281u}){const auto& expected=real_world.bodies().at(id).prefix->bounds_min_x_max_x_min_y_max_y;const auto actual=real_physics.bounds(id);
@@ -193,6 +198,13 @@ int main(int argc,char** argv){try {
         auto terrain_scene=scrapds::WorldPhysics::from_world(terrain_world);terrain_scene.add_saved_overworld_cell(0,overworld,catalog,*cell);auto free_scene=scrapds::WorldPhysics::from_world(terrain_world);
         terrain_scene.step(120);free_scene.step(120);require(terrain_scene.coverage().terrain_triangles==2048&&terrain_scene.bodies().at(0).position.z>free_scene.bodies().at(0).position.z+5,"saved survival surface did not affect body collision");
         std::cout<<"captured hull bounds verified\n";
+    }
+    if(argc==8&&std::string_view(argv[1])=="--regional") {
+        const scrapds::PhysicsRegionAnchor anchor{static_cast<std::uint16_t>(std::stoul(argv[2])),std::stod(argv[3]),std::stod(argv[4])};
+        const auto radius=std::stod(argv[5]);const auto assets=scrapds::AssetDefinitions::load(argv[6]);const auto real_world=scrapds::WorldState::load(argv[7]);
+        const std::set<std::uint32_t> no_dynamic_bodies;const auto physics=scrapds::WorldPhysics::from_world(real_world,1000.0,&no_dynamic_bodies,&assets,std::span(&anchor,1),radius);
+        require(physics.coverage().culled_static_bodies>0&&physics.coverage().culled_shapes>0,"regional physics did not cull the real save");
+        std::cout<<physics.summary_json()<<'\n';
     }
     std::cout<<"world physics checks passed\n";
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}

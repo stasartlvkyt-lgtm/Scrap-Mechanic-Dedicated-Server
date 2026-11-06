@@ -15,6 +15,7 @@
 
 namespace scrapds {
 namespace {
+constexpr std::size_t max_unbounded_physics_shapes=100000;
 // Bullet's cached hull bounds already include its collision margin. Avoid
 // adding it a second time when composing a saved object's broadphase bounds.
 class HullShape final : public btConvexHullShape {
@@ -74,13 +75,45 @@ WorldPhysics::WorldPhysics(std::unique_ptr<Impl> impl):impl_(std::move(impl)){}
 WorldPhysics::WorldPhysics(WorldPhysics&&) noexcept=default;
 WorldPhysics& WorldPhysics::operator=(WorldPhysics&&) noexcept=default;
 WorldPhysics::~WorldPhysics()=default;
-WorldPhysics WorldPhysics::from_world(const WorldState& state,double density,const std::set<std::uint32_t>* mapped_dynamic_ids,const AssetDefinitions* assets) {
+WorldPhysics WorldPhysics::from_world(const WorldState& state,double density,const std::set<std::uint32_t>* mapped_dynamic_ids,const AssetDefinitions* assets,
+    std::span<const PhysicsRegionAnchor> static_regions,double region_radius) {
     if(!std::isfinite(density)||density<=0||density>1e7)throw std::invalid_argument("invalid-block-density");
+    const bool regional=!static_regions.empty();
+    if(!regional&&state.shapes().size()>max_unbounded_physics_shapes)throw std::runtime_error("large-world-physics-requires-regional-anchors");
+    if(regional&&(!std::isfinite(region_radius)||region_radius<=0||region_radius>10000000))throw std::invalid_argument("invalid-saved-physics-region-radius");
+    for(const auto& anchor:static_regions)if(!std::isfinite(anchor.x)||!std::isfinite(anchor.y)||std::abs(anchor.x)>10000000||std::abs(anchor.y)>10000000)
+        throw std::invalid_argument("invalid-saved-physics-anchor");
     auto impl=std::make_unique<Impl>();impl->coverage.source_bodies=state.bodies().size();
     if(const auto terrain=state.table_counts().find("VoxelTerrain");terrain!=state.table_counts().end())impl->coverage.terrain_chunks=terrain->second;
     impl->world_version=state.physics_version();
+    std::map<std::uint32_t,std::optional<RigidBodyPose>> poses;
+    for(const auto& [id,body]:state.bodies())try{poses.emplace(id,decode_rigid_body_pose(body.data));}catch(const std::runtime_error&){poses.emplace(id,std::nullopt);}
+    std::vector<PhysicsRegionAnchor> regions(static_regions.begin(),static_regions.end());
+    if(regional&&mapped_dynamic_ids)for(const auto id:*mapped_dynamic_ids) {
+        const auto pose=poses.find(id);if(pose!=poses.end()&&pose->second&&!pose->second->is_static)
+            regions.push_back({pose->second->world_id,pose->second->position[0],pose->second->position[1]});
+    }
+    std::set<std::uint32_t> selected_bodies;
+    for(const auto& [id,body]:state.bodies()) {
+        const auto found=poses.find(id);const auto pose=found==poses.end()?std::optional<RigidBodyPose>{}:found->second;
+        bool selected=!regional;
+        if(regional&&pose&&!pose->is_static)selected=!mapped_dynamic_ids||mapped_dynamic_ids->contains(id);
+        if(regional&&!selected&&(!pose||pose->is_static))for(const auto& anchor:regions) {
+            const auto world=pose?pose->world_id:body.world_id;if(anchor.world_id!=world)continue;
+            if(body.prefix) {
+                const auto& bounds=body.prefix->bounds_min_x_max_x_min_y_max_y;
+                if(bounds[1]>=anchor.x-region_radius&&bounds[0]<=anchor.x+region_radius&&
+                   bounds[3]>=anchor.y-region_radius&&bounds[2]<=anchor.y+region_radius){selected=true;break;}
+            } else if(pose) {
+                if(std::abs(double(pose->position[0])-anchor.x)<=region_radius&&
+                   std::abs(double(pose->position[1])-anchor.y)<=region_radius){selected=true;break;}
+            } else {selected=true;break;}
+        }
+        if(selected)selected_bodies.insert(id);
+        else if(pose&&pose->is_static)++impl->coverage.culled_static_bodies;
+    }
     std::map<std::uint32_t,std::vector<const StoredShape*>> shapes;
-    for(const auto& [id,shape]:state.shapes()){(void)id;shapes[shape.body_id].push_back(&shape);}
+    for(const auto& [id,shape]:state.shapes()){(void)id;if(selected_bodies.contains(shape.body_id))shapes[shape.body_id].push_back(&shape);else ++impl->coverage.culled_shapes;}
     std::set<std::uint32_t> joint_bodies;
     for(const auto& [id,joint]:state.joints()) {
         (void)id;
@@ -177,6 +210,7 @@ WorldPhysics WorldPhysics::from_world(const WorldState& state,double density,con
     }
     for(const auto& [id,saved]:state.bodies()) {
         std::optional<RigidBodyPose> pose;
+        const auto selected=selected_bodies.contains(id);
         try{pose=decode_rigid_body_pose(saved.data);}catch(const std::runtime_error&){++impl->coverage.skipped_invalid;continue;}
         if(!pose){++impl->coverage.skipped_invalid;continue;}
         // A static anchor remains a valid collider even if unsupported joints
@@ -184,6 +218,7 @@ WorldPhysics WorldPhysics::from_world(const WorldState& state,double density,con
         if(!pose->is_static&&joint_bodies.contains(id)&&!enabled_joint_bodies.contains(id)){++impl->coverage.skipped_joint;continue;}
         if(!pose->is_static&&controller_bodies.contains(id)){++impl->coverage.skipped_controller;continue;}
         if(!pose->is_static&&mapped_dynamic_ids&&!mapped_dynamic_ids->contains(id)){++impl->coverage.skipped_unmapped;continue;}
+        if(!selected)continue;
         const auto group=shapes.find(id);
         if(group==shapes.end()||group->second.empty()){++impl->coverage.skipped_geometry;continue;}
         auto body=std::make_unique<Body>();body->id=id;body->world_id=pose->world_id;body->dynamic=!pose->is_static;
@@ -404,6 +439,6 @@ void WorldPhysics::writeback(WorldState& state) const {
     impl_->stepped=false;
 }
 std::string WorldPhysics::summary_json() const {
-    const auto& c=coverage();return "{\"mode\":\"experimental-block-bodies\",\"authoritative_game_parity\":false,\"source_bodies\":"+std::to_string(c.source_bodies)+",\"static_bodies\":"+std::to_string(c.static_bodies)+",\"dynamic_bodies\":"+std::to_string(c.dynamic_bodies)+",\"box_parts\":"+std::to_string(c.box_parts)+",\"cylinder_parts\":"+std::to_string(c.cylinder_parts)+",\"hull_parts\":"+std::to_string(c.hull_parts)+",\"bearing_joints\":"+std::to_string(c.bearing_joints)+",\"spring_joints\":"+std::to_string(c.spring_joints)+",\"passive_controllers\":"+std::to_string(c.passive_controllers)+",\"skipped_geometry\":"+std::to_string(c.skipped_geometry)+",\"skipped_joint\":"+std::to_string(c.skipped_joint)+",\"skipped_controller\":"+std::to_string(c.skipped_controller)+",\"skipped_unmapped\":"+std::to_string(c.skipped_unmapped)+",\"skipped_invalid\":"+std::to_string(c.skipped_invalid)+",\"unsupported_terrain_chunks\":"+std::to_string(c.terrain_chunks)+",\"terrain_triangles\":"+std::to_string(c.terrain_triangles)+",\"flat_surface_worlds\":"+std::to_string(c.flat_surface_worlds)+"}";
+    const auto& c=coverage();return "{\"mode\":\"experimental-block-bodies\",\"authoritative_game_parity\":false,\"source_bodies\":"+std::to_string(c.source_bodies)+",\"static_bodies\":"+std::to_string(c.static_bodies)+",\"dynamic_bodies\":"+std::to_string(c.dynamic_bodies)+",\"box_parts\":"+std::to_string(c.box_parts)+",\"cylinder_parts\":"+std::to_string(c.cylinder_parts)+",\"hull_parts\":"+std::to_string(c.hull_parts)+",\"bearing_joints\":"+std::to_string(c.bearing_joints)+",\"spring_joints\":"+std::to_string(c.spring_joints)+",\"passive_controllers\":"+std::to_string(c.passive_controllers)+",\"skipped_geometry\":"+std::to_string(c.skipped_geometry)+",\"skipped_joint\":"+std::to_string(c.skipped_joint)+",\"skipped_controller\":"+std::to_string(c.skipped_controller)+",\"skipped_unmapped\":"+std::to_string(c.skipped_unmapped)+",\"skipped_invalid\":"+std::to_string(c.skipped_invalid)+",\"culled_static_bodies\":"+std::to_string(c.culled_static_bodies)+",\"culled_shapes\":"+std::to_string(c.culled_shapes)+",\"unsupported_terrain_chunks\":"+std::to_string(c.terrain_chunks)+",\"terrain_triangles\":"+std::to_string(c.terrain_triangles)+",\"flat_surface_worlds\":"+std::to_string(c.flat_surface_worlds)+"}";
 }
 }

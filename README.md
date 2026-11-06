@@ -96,10 +96,13 @@ New-Item -ItemType File 'D:\scrap-server\session-001\stop.request'
 This command still requires captured bootstrap/replay metadata and, unless
 `--public` is selected, an explicit allowed Steam peer. `--public` requests
 Steam advertisement, but public discovery and public joins are not verified.
-`--native-physics` enables only mapped bodies and supported shapes/joints; it
-uses approximate materials and streams saved Survival heightfield cells around
-active players and bodies. It also meshes complete supported tile voxel chunks
-and applies saved `VoxelTerrain` edits to those chunks for collision.
+`--native-physics` enables mapped dynamic bodies, nearby saved static bodies,
+and supported shapes/joints. Static bodies are selected from RTree bounds
+around active characters and mapped creations, then refreshed as those anchors
+cross 128 m regions; `<output>/physics.json` reports loaded and culled objects.
+It uses approximate materials and streams saved Survival heightfield cells
+around active players and bodies. It also meshes complete supported tile voxel
+chunks and applies saved `VoxelTerrain` edits to those chunks for collision.
 `--native-players` also streams nearby terrain into the static character
 collision scene when native body physics is off. That scene includes saved
 block geometry and supported box, cylinder and hull part assets at their saved
