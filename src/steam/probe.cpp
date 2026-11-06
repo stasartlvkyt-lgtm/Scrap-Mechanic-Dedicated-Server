@@ -854,8 +854,8 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                 const auto command_world=player_worlds.contains(message->connection)?player_worlds.at(message->connection):std::uint16_t(0);
                                 auto processed=apply_replicated_command(*native_world,*native_assets,command,server_tick,*native_catalog,command_world,player_container);
                                 result=processed.command;response=std::move(processed.response);world_mutated=result.applied;
-                                if(result.applied&&!result.changed_container_slots.empty())
-                                    for(const auto peer:game_started)if(player_worlds.contains(peer)&&player_worlds.at(peer)==command_world)recipients.insert(peer);
+                                if(result.applied)for(const auto peer:game_started)
+                                    if(!native_players||(player_worlds.contains(peer)&&player_worlds.at(peer)==command_world))recipients.insert(peer);
                             }
                             if(result.applied)++applied_commands;else ++rejected_commands;
                             if(world_mutated&&character_collision)try {
@@ -874,7 +874,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                 } catch(const std::exception& e){physics.reset();std::cerr<<"scrapds: physics disabled after world change: "<<e.what()<<'\n';try{write_file(directory/L"physics.json","{\"active\":false,\"error\":"+json_quote(e.what())+'}');}catch(const std::exception&) {}}
                             }
                             if(!response.empty()) {
-                                if(recipients.empty())recipients=game_started;
+                                if(recipients.empty()&&!native_players)recipients=game_started;
                                 net::deliver_world_update(recipients,pending_close,desynchronized,[&](Handle peer){return send_game(peer,response,result.reason=="applied"&&std::holds_alternative<net::PaintCharacterCommand>(command)?"native-character-paint":"native-object-update");});
                             }
                             if(game_events.size()<10000)game_events.push_back("{\"kind\":\"native-command\",\"applied\":"+std::string(result.applied?"true":"false")+",\"reason\":"+json_quote(result.reason)+",\"elapsed_seconds\":"+elapsed(started)+'}');
