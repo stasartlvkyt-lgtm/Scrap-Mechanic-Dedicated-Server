@@ -890,15 +890,18 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                 const double allowed_distance=6.0*(elapsed_ticks*0.025)+0.3;
                                 const double dx=double(update.position[0])-previous->position[0];
                                 const double dy=double(update.position[1])-previous->position[1];
+                                const double dz=double(update.position[2])-previous->position[2];
                                 const double horizontal_distance=std::hypot(dx,dy);
                                 if(horizontal_distance>allowed_distance)throw std::runtime_error("character-horizontal-speed-limit");
                                 if(character_collision&&player_worlds.contains(message->connection)) {
                                     const Vec3 start{previous->position[0],previous->position[1],previous->position[2]};
-                                    const auto motion=character_collision->move_capsule(player_worlds.at(message->connection),start,{dx,dy,0},0.3,0.8);
+                                    const auto motion=character_collision->move_capsule(player_worlds.at(message->connection),start,{dx,dy,dz},0.3,0.8);
                                     update.position[0]=static_cast<float>(motion.position.x);
                                     update.position[1]=static_cast<float>(motion.position.y);
+                                    update.position[2]=static_cast<float>(motion.position.z);
                                     if(std::abs(motion.position.x-(previous->position[0]+dx))>0.002||
-                                       std::abs(motion.position.y-(previous->position[1]+dy))>0.002)
+                                       std::abs(motion.position.y-(previous->position[1]+dy))>0.002||
+                                       std::abs(motion.position.z-(previous->position[2]+dz))>0.002)
                                         corrected_position=update.position;
                                 }
                             }

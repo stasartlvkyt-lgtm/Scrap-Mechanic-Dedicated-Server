@@ -1712,7 +1712,7 @@ wire (9 байт):      1E 70 <tick LE32> 00 00 00   (LZ4 block, byte 0 сохр
 1. Реальный vanilla-client тест постройки и её появления у второго
    клиента; синтетический Steam peer сейчас не инициализируется через
    доступную пользовательскую Steam-сессию.
-2. PaintCharacter defaults for other Character assets and tool authorization; extend the new horizontal block-collision movement guard to vertical movement, terrain, parts and dynamic obstacles, and verify ownership against Player state.
+2. PaintCharacter defaults for other Character assets and tool authorization; extend the new block-collision movement guard to terrain, parts and dynamic obstacles, and verify ownership against Player state.
 3. Survival item inventory and its costs, containers, seating, held-tool state.
 4. Авторитетная физика персонажей и построек, серверная коррекция.
 5. Серверный LuaJIT/`sm.*`, game mode и моды.

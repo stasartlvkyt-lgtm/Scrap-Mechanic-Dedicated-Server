@@ -219,12 +219,12 @@ The current executable and evidence tools form a working foundation for it.
   Accepted updates are relayed to other joined peers. Malformed, stale, or
   ownership-conflicting updates are dropped and counted.
 - The listener now rejects horizontal movement above 6 m/s plus 0.3 m tolerance
-  per client tick delta, then sweeps the horizontal capsule path against saved
-  block boxes. Corrected coordinates are written into the server ID24 packet
+  per client tick delta, then sweeps the full capsule path against saved block
+  boxes. Corrected coordinates are written into the server ID24 packet
   sent to the owner and observing peers.
   Capsule dimensions come from the installed default character definition
   (radius 0.3 m, total height 1.4 m). This does not yet simulate vertical
-  movement, terrain, parts or dynamic obstacles; collision sweeps are disabled
+  terrain, parts or dynamic obstacles; collision sweeps are disabled
   when experimental body physics is active. The first claim still is not
   verified against the server's Player table, and live behavior is unverified.
 - `character_tests` and the full CTest suite pass (18/18).
