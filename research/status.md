@@ -220,14 +220,16 @@ The current executable and evidence tools form a working foundation for it.
   ownership-conflicting updates are dropped and counted.
 - The listener now rejects horizontal movement above 6 m/s plus 0.3 m tolerance
   per client tick delta, then sweeps the full capsule path against saved block
-  boxes. Corrected coordinates are written into the server ID24 packet
-  sent to the owner and observing peers.
+  boxes when native physics is disabled. In native-physics mode it instead
+  checks the current Bullet scene, including mapped moving bodies and resident
+  terrain. Corrected coordinates are written into the server ID24 packet sent
+  to the owner and observing peers. The first update is measured from the
+  server-assigned spawn position and tick, closing the initial teleport gap.
   Capsule dimensions come from the installed default character definition
-  (radius 0.3 m, total height 1.4 m). This does not yet simulate vertical
-  terrain, parts or dynamic obstacles; collision sweeps are disabled
-  when experimental body physics is active. The first claim still is not
-  verified against the server's Player table, and live behavior is unverified.
-- `character_tests` and the full CTest suite pass (18/18).
+  (radius 0.3 m, total height 1.4 m). The server still does not simulate
+  CharacterController movement, gravity or jumping, and live behavior is
+  unverified.
+- `character_tests` and the full CTest suite pass (20/20 in the current build).
 
 - Added a 30 Hz server tick stream (message `0x1E`, tick +2 per packet) to
   clients that reached `game_started`, a second allowed Steam peer, and relay
@@ -544,7 +546,8 @@ that received the corresponding Character spawn. The delta uses each receiving
 peer's latest accepted input/heartbeat tick (or zero before its first packet),
 following the receiver's acknowledgement bookkeeping; this mapping is inferred
 from `47BCC0` and still requires a live multi-client check. Horizontal speed is
-bounded and saved block geometry clips the path in native-player mode. Vertical
+bounded; saved block geometry clips the path without native physics, while the
+current native Bullet scene clips it when native physics is enabled. Vertical
 movement and the full character controller remain client supplied, and
 multi-client gameplay confirmation remains outstanding.
 Client loop `47BCC0` advances its runtime tick once per 25 ms. The listener now

@@ -58,6 +58,7 @@ PlayerSpawnPackets prepare_player_spawn(WorldState& world,net::ServerCharacters&
     try {
         world.atomic([&] {
             result.player_id=spec.existing_player_id?*spec.existing_player_id:world.reserve_player_id();result.owner_steam_id=spec.steam_id;
+            result.spawn_server_tick=tick;result.spawn_position=spec.character.position;
             result.character_id=characters.spawn(spec.steam_id);spawned=true;
             result.player_state_words=spec.player_state_words;result.player_flags=spec.player_flags;result.info=spec.info;
             result.inventory_container_id=world.ensure_player_inventory_container(spec.steam_id,spec.player_state_words[1]);

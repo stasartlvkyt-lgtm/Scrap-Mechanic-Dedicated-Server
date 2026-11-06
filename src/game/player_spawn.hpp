@@ -21,6 +21,8 @@ struct PlayerSpawnSpec {
 };
 struct PlayerSpawnPackets {
     std::uint32_t player_id{},character_id{};
+    std::uint32_t spawn_server_tick{};
+    std::array<float,3> spawn_position{};
     std::uint32_t inventory_container_id{UINT32_MAX};
     std::uint64_t owner_steam_id{};
     std::array<std::uint32_t,3> player_state_words{UINT32_MAX,UINT32_MAX,UINT32_MAX};

@@ -183,6 +183,7 @@ int main(){try{
     require(failed_spawn&&characters.size()==0,"failed spawn left a registered character");
     spec.info.name="Bob";const auto spawn=scrapds::prepare_player_spawn(spawn_world,characters,spec,42);
     require(spawn.player_id==1010&&spawn.character_id==2&&characters.size()==1,"spawn did not roll back Player ID or preserve Character ID uniqueness");
+    require(spawn.spawn_server_tick==42&&spawn.spawn_position==spec.character.position,"spawn movement baseline was not retained");
     const auto before=scrapds::net::parse_blob_data_packet(spawn.player_before),after=scrapds::net::parse_blob_data_packet(spawn.player_after);
     auto uncompress_player=[](const auto& entry){std::vector<std::uint8_t> bytes{0};bytes.insert(bytes.end(),entry.payload.begin(),entry.payload.end());bytes=scrapds::net::decompress_packet(bytes);bytes.erase(bytes.begin());return bytes;};
     const auto before_data=uncompress_player(before.entries.at(0)),after_data=uncompress_player(after.entries.at(0));

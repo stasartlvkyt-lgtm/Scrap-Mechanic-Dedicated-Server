@@ -883,30 +883,38 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                         auto update=net::parse_character_update(plain);
                         std::optional<std::array<float,3>> corrected_position;
                         if(update.has_character_state) {
-                            if(native_players)if(const auto previous=server_characters.latest(message->peer.steam_id())) {
-                                const auto tick_delta=std::bit_cast<std::int32_t>(update.tick-previous->tick);
-                                if(tick_delta<0)throw std::runtime_error("stale-character-tick");
-                                const double elapsed_ticks=std::clamp(double(tick_delta),0.0,40.0);
-                                const double allowed_distance=6.0*(elapsed_ticks*0.025)+0.3;
-                                const double dx=double(update.position[0])-previous->position[0];
-                                const double dy=double(update.position[1])-previous->position[1];
-                                const double dz=double(update.position[2])-previous->position[2];
-                                const double horizontal_distance=std::hypot(dx,dy);
-                                if(horizontal_distance>allowed_distance)throw std::runtime_error("character-horizontal-speed-limit");
-                                if((character_collision||physics)&&player_worlds.contains(message->connection)) {
-                                    const Vec3 start{previous->position[0],previous->position[1],previous->position[2]};
-                                    const auto world_id=player_worlds.at(message->connection);
-                                    const Vec3 displacement{dx,dy,dz};
-                                    const auto corrected=physics
-                                        ?physics->move_character_capsule(world_id,start,displacement,0.3,0.8).position
-                                        :character_collision->move_capsule(world_id,start,displacement,0.3,0.8).position;
-                                    update.position[0]=static_cast<float>(corrected.x);
-                                    update.position[1]=static_cast<float>(corrected.y);
-                                    update.position[2]=static_cast<float>(corrected.z);
-                                    if(std::abs(corrected.x-(previous->position[0]+dx))>0.002||
-                                       std::abs(corrected.y-(previous->position[1]+dy))>0.002||
-                                       std::abs(corrected.z-(previous->position[2]+dz))>0.002)
-                                        corrected_position=update.position;
+                            if(native_players) {
+                                std::array<float,3> baseline{};double elapsed_ticks{};bool have_baseline=false;
+                                if(const auto previous=server_characters.latest(message->peer.steam_id())) {
+                                    const auto tick_delta=std::bit_cast<std::int32_t>(update.tick-previous->tick);
+                                    if(tick_delta<0)throw std::runtime_error("stale-character-tick");
+                                    elapsed_ticks=std::clamp(double(tick_delta),0.0,40.0);baseline=previous->position;have_baseline=true;
+                                } else if(const auto spawn=live_players.find(message->connection);spawn!=live_players.end()) {
+                                    const auto server_age=std::bit_cast<std::int32_t>(server_tick-spawn->second.spawn_server_tick);
+                                    elapsed_ticks=std::clamp(double(server_age),0.0,40.0);baseline=spawn->second.spawn_position;have_baseline=true;
+                                }
+                                if(have_baseline) {
+                                    const double allowed_distance=6.0*(elapsed_ticks*0.025)+0.3;
+                                    const double dx=double(update.position[0])-baseline[0];
+                                    const double dy=double(update.position[1])-baseline[1];
+                                    const double dz=double(update.position[2])-baseline[2];
+                                    const double horizontal_distance=std::hypot(dx,dy);
+                                    if(horizontal_distance>allowed_distance)throw std::runtime_error("character-horizontal-speed-limit");
+                                    if((character_collision||physics)&&player_worlds.contains(message->connection)) {
+                                        const Vec3 start{baseline[0],baseline[1],baseline[2]};
+                                        const auto world_id=player_worlds.at(message->connection);
+                                        const Vec3 displacement{dx,dy,dz};
+                                        const auto corrected=physics
+                                            ?physics->move_character_capsule(world_id,start,displacement,0.3,0.8).position
+                                            :character_collision->move_capsule(world_id,start,displacement,0.3,0.8).position;
+                                        update.position[0]=static_cast<float>(corrected.x);
+                                        update.position[1]=static_cast<float>(corrected.y);
+                                        update.position[2]=static_cast<float>(corrected.z);
+                                        if(std::abs(corrected.x-(baseline[0]+dx))>0.002||
+                                           std::abs(corrected.y-(baseline[1]+dy))>0.002||
+                                           std::abs(corrected.z-(baseline[2]+dz))>0.002)
+                                            corrected_position=update.position;
+                                    }
                                 }
                             }
                             const auto rejection=native_players?server_characters.observe(message->peer.steam_id(),update):character_states.observe(message->peer.steam_id(),update);if(!rejection.empty())throw std::runtime_error(rejection);
