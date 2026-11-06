@@ -133,6 +133,13 @@ int main() {
         const auto tumble=scrapds::net::parse_character_update(tumble_fixture());
         if(!tumble.has_character_state||tumble.state_type!=4||tumble.character_id!=1||std::fabs(tumble.rotation[0]-1.0f)>1e-6f)
             throw std::runtime_error("tumble quaternion fixture decode mismatch");
+        const std::array<float,3> corrected_tumble{tumble.position[0]+0.5f,tumble.position[1]-0.25f,tumble.position[2]+1.0f};
+        const auto tumble_authoritative=scrapds::net::parse_server_character_update(
+            scrapds::net::make_server_character_update(tumble_fixture(),558600,tumble.tick,3,corrected_tumble)).character;
+        if(tumble_authoritative.state_type!=4||tumble_authoritative.rotation!=tumble.rotation)
+            throw std::runtime_error("authoritative tumble update changed its rotation");
+        for(std::size_t i=0;i<3;++i)if(std::abs(tumble_authoritative.position[i]-corrected_tumble[i])>0.0001f)
+            throw std::runtime_error("authoritative tumble position encoding mismatch");
         const auto rotated=scrapds::net::parse_character_update(tumble_fixture(1,4096));
         if(std::fabs(rotated.rotation[1]-0.3535965f)>1e-5f||std::fabs(rotated.rotation[0]-std::sqrt(1.0f-rotated.rotation[1]*rotated.rotation[1]))>1e-5f)
             throw std::runtime_error("tumble quaternion scale mismatch");
