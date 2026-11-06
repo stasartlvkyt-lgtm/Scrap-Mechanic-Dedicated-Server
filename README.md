@@ -87,7 +87,7 @@ output directory must not already exist.
   --output 'D:\scrap-server\session-001' --allow-peer <STEAMID64> `
   --replay 'D:\scrap-server\bootstrap' --world 'D:\scrap-server\world.db' `
   --handshake --game-ready --native-players
-# Optional: enable experimental block physics and nearby Survival terrain.
+# Optional: enable experimental mapped-body physics and nearby Survival terrain.
 # Add --native-physics to the command above.
 # Clean shutdown:
 New-Item -ItemType File 'D:\scrap-server\session-001\stop.request'
@@ -101,8 +101,11 @@ uses approximate materials and streams saved Survival heightfield cells around
 active players and bodies. It also meshes complete supported tile voxel chunks
 and applies saved `VoxelTerrain` edits to those chunks for collision.
 `--native-players` also streams nearby terrain into the static character
-collision scene when native body physics is off, and uses the saved Creative
-flat-world plane. It does
+collision scene when native body physics is off. That scene includes saved
+block geometry and supported box, cylinder and hull part assets at their saved
+poses, plus the saved Creative flat-world plane. Parts with missing or
+unsupported asset geometry are counted and omitted; saved part proxies do not
+move unless native body physics is enabled. It does
 not simulate all joints/controllers, the character controller, NPCs, or the
 game's Lua gameplay. Two ID25 ScriptData groups now refresh from the supplied
 save when at least three distinct keys match either the captured key set or

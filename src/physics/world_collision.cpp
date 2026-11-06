@@ -1,6 +1,7 @@
 #include "world_collision.hpp"
 #include "data/state.hpp"
 #include "data/shape_geometry.hpp"
+#include "data/assets.hpp"
 #include "data/terrain.hpp"
 #include <btBulletCollisionCommon.h>
 #include <algorithm>
@@ -33,11 +34,21 @@ struct Scene {
     btDbvtBroadphase broadphase;
     btCollisionWorld world{&dispatcher, &broadphase, &config};
     std::deque<Identity> identities;
-    std::vector<std::unique_ptr<btBoxShape>> shapes;
+    std::vector<std::unique_ptr<btCollisionShape>> shapes;
     std::vector<std::unique_ptr<btCollisionObject>> objects;
     std::map<std::uint32_t, CollisionBounds> body_bounds;
     std::map<std::tuple<bool,std::int32_t,std::int32_t>,std::unique_ptr<Terrain>> terrain;
     ~Scene() { for(auto& [key,item]:terrain){(void)key;world.removeCollisionObject(item->object.get());}for (auto& object : objects) world.removeCollisionObject(object.get()); }
+    void add_object(std::uint32_t shape_id,std::uint32_t body_id,std::uint16_t world_id,
+                    std::unique_ptr<btCollisionShape> shape,const btTransform& transform) {
+        auto object=std::make_unique<btCollisionObject>();
+        object->setCollisionShape(shape.get());object->setWorldTransform(transform);
+        identities.push_back({shape_id,body_id,world_id});object->setUserPointer(&identities.back());
+        btVector3 lo,hi;shape->getAabb(transform,lo,hi);
+        auto [at,inserted]=body_bounds.emplace(body_id,CollisionBounds{native(lo),native(hi)});
+        if(!inserted){auto& b=at->second;b.minimum={std::min(b.minimum.x,double(lo.x())),std::min(b.minimum.y,double(lo.y())),std::min(b.minimum.z,double(lo.z()))};b.maximum={std::max(b.maximum.x,double(hi.x())),std::max(b.maximum.y,double(hi.y())),std::max(b.maximum.z,double(hi.z()))};}
+        shapes.push_back(std::move(shape));objects.push_back(std::move(object));world.addCollisionObject(objects.back().get());
+    }
     void add(const CollisionBlock& block) {
         if (!finite(block.body_position)) throw std::runtime_error("invalid block body position");
         double norm=0;
@@ -56,13 +67,39 @@ struct Scene {
         btTransform local;local.setIdentity();local.setOrigin(bullet(center));
         auto shape=std::make_unique<btBoxShape>(half);
         shape->setMargin(btScalar(0));
-        auto object=std::make_unique<btCollisionObject>();
-        object->setCollisionShape(shape.get());object->setWorldTransform(parent*local);
-        identities.push_back({block.shape_id,block.body_id,block.world_id});object->setUserPointer(&identities.back());
-        btVector3 lo,hi;shape->getAabb(object->getWorldTransform(),lo,hi);
-        auto [at,inserted]=body_bounds.emplace(block.body_id,CollisionBounds{native(lo),native(hi)});
-        if(!inserted){auto& b=at->second;b.minimum={std::min(b.minimum.x,double(lo.x())),std::min(b.minimum.y,double(lo.y())),std::min(b.minimum.z,double(lo.z()))};b.maximum={std::max(b.maximum.x,double(hi.x())),std::max(b.maximum.y,double(hi.y())),std::max(b.maximum.z,double(hi.z()))};}
-        shapes.push_back(std::move(shape));objects.push_back(std::move(object));world.addCollisionObject(objects.back().get());
+        add_object(block.shape_id,block.body_id,block.world_id,std::move(shape),parent*local);
+    }
+    void add_part(std::uint32_t shape_id,std::uint32_t body_id,std::uint16_t world_id,
+                  const ShapeGeometry& geometry,const RigidBodyPose& body,const AssetDefinition& asset) {
+        std::array<double,3> dimensions{};std::optional<CylinderDimensions> cylinder;const HullGeometry* hull=nullptr;
+        if(asset.box_dimensions)dimensions=*asset.box_dimensions;
+        else if(asset.cylinder_dimensions){cylinder=asset.cylinder_dimensions;dimensions.fill(cylinder->diameter);dimensions[cylinder->axis]=cylinder->depth;}
+        else if(asset.hull_geometry){hull=&*asset.hull_geometry;dimensions=hull->dimensions;}
+        else throw std::runtime_error("unsupported-part-collision-asset");
+        for(const auto n:dimensions)if(!std::isfinite(n)||n<=0||n>32767)throw std::runtime_error("invalid-part-collision-dimensions");
+        const btVector3 half{btScalar(dimensions[0]*0.125),btScalar(dimensions[1]*0.125),btScalar(dimensions[2]*0.125)};
+        std::unique_ptr<btCollisionShape> child;
+        if(hull) {
+            auto shape=std::make_unique<btConvexHullShape>();
+            for(const auto& vertex:hull->vertices)shape->addPoint({btScalar(vertex[0]*0.25),btScalar(vertex[1]*0.25),btScalar(vertex[2]*0.25)},false);
+            shape->setMargin(btScalar(hull->margin));shape->recalcLocalAabb();child=std::move(shape);
+        } else if(!cylinder) {
+            auto shape=std::make_unique<btBoxShape>(half);shape->setMargin(0);child=std::move(shape);
+        } else if(cylinder->axis==0) {
+            auto shape=std::make_unique<btCylinderShapeX>(half);shape->setMargin(0);child=std::move(shape);
+        } else if(cylinder->axis==1) {
+            auto shape=std::make_unique<btCylinderShape>(half);shape->setMargin(0);child=std::move(shape);
+        } else {
+            auto shape=std::make_unique<btCylinderShapeZ>(half);shape->setMargin(0);child=std::move(shape);
+        }
+        const auto& xa=geometry.x_axis;const auto& za=geometry.z_axis;const auto y=std::array<double,3>{
+            double(za[1])*xa[2]-double(za[2])*xa[1],double(za[2])*xa[0]-double(za[0])*xa[2],double(za[0])*xa[1]-double(za[1])*xa[0]};
+        btMatrix3x3 basis{btScalar(xa[0]),btScalar(y[0]),btScalar(za[0]),btScalar(xa[1]),btScalar(y[1]),btScalar(za[1]),btScalar(xa[2]),btScalar(y[2]),btScalar(za[2])};
+        btTransform local;local.setIdentity();local.setBasis(basis);
+        local.setOrigin(btVector3(btScalar(geometry.grid_position[0]*0.25),btScalar(geometry.grid_position[1]*0.25),btScalar(geometry.grid_position[2]*0.25))+basis*half);
+        btQuaternion rotation(btScalar(body.rotation_xyzw[0]),btScalar(body.rotation_xyzw[1]),btScalar(body.rotation_xyzw[2]),btScalar(body.rotation_xyzw[3]));
+        rotation.normalize();const btTransform parent(rotation,{body.position[0],body.position[1],body.position[2]});
+        add_object(shape_id,body_id,world_id,std::move(child),parent*local);
     }
     void add_terrain(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y,std::span<const TerrainVertex> vertices,bool overworld_cell=true) {
         if(vertices.empty()||vertices.size()%3||vertices.size()>3000000)throw std::runtime_error("invalid-overworld-collision-mesh");
@@ -90,6 +127,11 @@ struct WorldCollision::Impl {
     CollisionCoverage coverage;
     std::map<std::uint16_t,std::unique_ptr<Scene>> scenes;
     void add(const CollisionBlock& block){auto& scene=scenes[block.world_id];if(!scene)scene=std::make_unique<Scene>();scene->add(block);++coverage.block_boxes;coverage.worlds=scenes.size();}
+    void add_part(std::uint32_t shape_id,std::uint32_t body_id,std::uint16_t world_id,const ShapeGeometry& geometry,const RigidBodyPose& body,const AssetDefinition& asset) {
+        auto& scene=scenes[world_id];if(!scene)scene=std::make_unique<Scene>();scene->add_part(shape_id,body_id,world_id,geometry,body,asset);
+        if(asset.box_dimensions)++coverage.part_boxes;else if(asset.cylinder_dimensions)++coverage.part_cylinders;else if(asset.hull_geometry)++coverage.part_hulls;
+        coverage.worlds=scenes.size();
+    }
     void add_flat(std::uint16_t world_id,std::span<const TerrainVertex> vertices){auto& scene=scenes[world_id];if(!scene)scene=std::make_unique<Scene>();scene->add_terrain(world_id,0,0,vertices,false);coverage.terrain_triangles+=vertices.size()/3;coverage.worlds=scenes.size();}
 };
 WorldCollision::WorldCollision(std::unique_ptr<Impl> impl):impl_(std::move(impl)){}
@@ -97,7 +139,7 @@ WorldCollision::WorldCollision(WorldCollision&&) noexcept=default;
 WorldCollision& WorldCollision::operator=(WorldCollision&&) noexcept=default;
 WorldCollision::~WorldCollision()=default;
 WorldCollision WorldCollision::from_blocks(const std::vector<CollisionBlock>& blocks){auto p=std::make_unique<Impl>();std::set<std::pair<std::uint16_t,std::uint32_t>> ids;for(const auto& block:blocks){if(!ids.emplace(block.world_id,block.shape_id).second)throw std::runtime_error("duplicate collision shape ID");p->add(block);}p->coverage.source_shapes=blocks.size();return WorldCollision(std::move(p));}
-WorldCollision WorldCollision::from_world(const WorldState& state){
+WorldCollision WorldCollision::from_world(const WorldState& state,const AssetDefinitions* assets){
     auto p=std::make_unique<Impl>();p->coverage.source_shapes=state.shapes().size();p->coverage.unsupported_joints=state.joints().size();
     std::map<std::uint32_t,std::optional<RigidBodyPose>> poses;
     for(const auto& [id,body]:state.bodies()){
@@ -107,9 +149,16 @@ WorldCollision WorldCollision::from_world(const WorldState& state){
         std::optional<ShapeGeometry> shape;
         try{shape=decode_child_geometry(stored.data);}catch(const std::runtime_error&){++p->coverage.unsupported_shapes;continue;}
         if(!shape){++p->coverage.unsupported_shapes;continue;}
-        if(shape->kind!=SavedShapeKind::block){++p->coverage.unsupported_parts;continue;}
         const auto pose=poses.find(stored.body_id);
         if(pose==poses.end()||!pose->second){++p->coverage.unsupported_bodies;continue;}
+        if(shape->kind==SavedShapeKind::part&&assets) {
+            const auto* asset=assets->find(shape->uuid);
+            if(!asset){++p->coverage.unsupported_parts;continue;}
+            try{p->add_part(id,stored.body_id,pose->second->world_id,*shape,*pose->second,*asset);}
+            catch(const std::runtime_error&){++p->coverage.unsupported_parts;}
+            continue;
+        }
+        if(shape->kind!=SavedShapeKind::block){++p->coverage.unsupported_parts;continue;}
         const auto& dimensions=*shape->grid_dimensions;
         if(dimensions[0]<=0||dimensions[1]<=0||dimensions[2]<=0){++p->coverage.degenerate_blocks;continue;}
         const auto& body=*pose->second;
@@ -180,5 +229,5 @@ void WorldCollision::remove_overworld_cell_mesh(std::uint16_t world_id,std::int3
     const auto scene=impl_->scenes.find(world_id);if(scene==impl_->scenes.end())return;const auto it=scene->second->terrain.find({true,cell_x,cell_y});if(it==scene->second->terrain.end())return;
     impl_->coverage.terrain_triangles-=it->second->triangles;scene->second->remove_terrain(cell_x,cell_y);
 }
-std::string WorldCollision::summary_json()const{const auto& c=coverage();return "{\"mode\":\"decoded-block-and-resident-terrain-collision\",\"game_physics_parity\":false,\"source_shapes\":"+std::to_string(c.source_shapes)+",\"block_boxes\":"+std::to_string(c.block_boxes)+",\"terrain_triangles\":"+std::to_string(c.terrain_triangles)+",\"unsupported_parts\":"+std::to_string(c.unsupported_parts)+",\"unsupported_shapes\":"+std::to_string(c.unsupported_shapes)+",\"degenerate_blocks\":"+std::to_string(c.degenerate_blocks)+",\"unsupported_body_shapes\":"+std::to_string(c.unsupported_bodies)+",\"unsupported_joints\":"+std::to_string(c.unsupported_joints)+",\"worlds\":"+std::to_string(c.worlds)+"}";}
+std::string WorldCollision::summary_json()const{const auto& c=coverage();return "{\"mode\":\"decoded-block-part-and-resident-terrain-collision\",\"game_physics_parity\":false,\"source_shapes\":"+std::to_string(c.source_shapes)+",\"block_boxes\":"+std::to_string(c.block_boxes)+",\"part_boxes\":"+std::to_string(c.part_boxes)+",\"part_cylinders\":"+std::to_string(c.part_cylinders)+",\"part_hulls\":"+std::to_string(c.part_hulls)+",\"terrain_triangles\":"+std::to_string(c.terrain_triangles)+",\"unsupported_parts\":"+std::to_string(c.unsupported_parts)+",\"unsupported_shapes\":"+std::to_string(c.unsupported_shapes)+",\"degenerate_blocks\":"+std::to_string(c.degenerate_blocks)+",\"unsupported_body_shapes\":"+std::to_string(c.unsupported_bodies)+",\"unsupported_joints\":"+std::to_string(c.unsupported_joints)+",\"worlds\":"+std::to_string(c.worlds)+"}";}
 }

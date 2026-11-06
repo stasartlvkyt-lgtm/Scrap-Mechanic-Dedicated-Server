@@ -848,3 +848,8 @@ diverged from the client. The revised cadence needs live-session confirmation.
 - Live Character create/state, inventory-container visibility and successful world-command updates are restricted to peers in the same saved world. Offline Player records still replicate for the player list. Multi-world visibility has build coverage only and has not been checked with multiple live clients.
 - Harvestable and Character interaction requests (IDs `0x28`/`0x29`) now have strict 32-bit target codecs and are explicitly rejected until their server gameplay semantics exist; they are no longer forwarded to other clients.
 
+## Static saved-part collision (2026-11-06)
+
+- When `--native-players` runs without `--native-physics`, the character collision scene now imports supported saved part asset geometry alongside blocks and resident terrain. Box, cylinder and convex-hull definitions use each `ChildShape` grid placement and axes plus its saved `RigidBody` pose. Coverage reports each part geometry kind and counts unknown/unsupported part assets. These shapes remain static at their saved pose; they do not follow simulated bodies in this mode.
+- Added a synthetic SQLite save test using the observed part and static-body BLOB layouts. It checks asset lookup, world identity, transformed box placement and ray hit identity. Build and all 20 CTest tests pass. Cylinder/hull collision fixtures and live-client behavior remain unverified.
+

@@ -2,8 +2,13 @@
 #include "data/state.hpp"
 #include "data/shape_geometry.hpp"
 #include "data/terrain.hpp"
+#include "data/assets.hpp"
+#include <sqlite3.h>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -11,6 +16,10 @@
 namespace {
 void require(bool v,const char* text){if(!v)throw std::runtime_error(text);}
 bool close(double a,double b,double tolerance=0.0001){return std::abs(a-b)<=tolerance;}
+std::vector<std::uint8_t> from_hex(const std::string& hex){std::vector<std::uint8_t> bytes;for(std::size_t i=0;i<hex.size();i+=2)bytes.push_back(std::uint8_t(std::stoul(hex.substr(i,2),nullptr,16)));return bytes;}
+void sql(sqlite3* db,const char* query){char* error=nullptr;if(sqlite3_exec(db,query,nullptr,nullptr,&error)!=SQLITE_OK){std::string message=error?error:"sqlite failure";sqlite3_free(error);throw std::runtime_error(message);}}
+void blob(sqlite3* db,const char* query,const std::vector<std::uint8_t>& bytes){sqlite3_stmt* statement=nullptr;require(sqlite3_prepare_v2(db,query,-1,&statement,nullptr)==SQLITE_OK,"part collision fixture prepare");sqlite3_bind_blob64(statement,1,bytes.data(),bytes.size(),SQLITE_TRANSIENT);const auto result=sqlite3_step(statement);sqlite3_finalize(statement);require(result==SQLITE_DONE,"part collision fixture insert");}
+struct Temp{std::filesystem::path path=std::filesystem::temp_directory_path()/("scrapds-collision-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));Temp(){std::filesystem::create_directories(path);}~Temp(){std::error_code error;std::filesystem::remove_all(path,error);}};
 }
 int main(int argc,char** argv){
     try{
@@ -42,6 +51,22 @@ int main(int argc,char** argv){
         require(clear.contacts.empty()&&close(clear.position.y,23),"capsule motion changed in an empty world");
         const auto bound=scene.body_bounds(4,3);
         require(bound&&close(bound->minimum.x,8)&&close(bound->maximum.x,10)&&close(bound->minimum.y,21)&&close(bound->maximum.y,22),"rotated block bounds");
+        {
+            Temp fixture;const auto shape_dir=fixture.path/"Data/Objects/Database/ShapeSets";std::filesystem::create_directories(shape_dir);
+            {std::ofstream file(shape_dir/"parts.shapeset");file<<R"({"partList":[{"uuid":"e281599c-2343-4c86-886e-b2c1444e8810","name":"part","box":{"x":4,"y":4,"z":4}}]})";}
+            const auto database=fixture.path/"world.db";sqlite3* db=nullptr;require(sqlite3_open(database.string().c_str(),&db)==SQLITE_OK,"part collision fixture open");
+            sql(db,"CREATE TABLE Game(savegameversion INTEGER,flags INTEGER,seed INTEGER,gametick INTEGER,uniqueIds BLOB);INSERT INTO Game VALUES(30,1,0,0,NULL);CREATE TABLE RigidBody(id INTEGER PRIMARY KEY,worldId INTEGER,data BLOB);CREATE TABLE ChildShape(id INTEGER PRIMARY KEY,bodyId INTEGER,data BLOB);CREATE TABLE Joint(id INTEGER PRIMARY KEY,childShapeIdA INTEGER,childShapeIdB INTEGER,data BLOB);CREATE VIRTUAL TABLE RigidBodyBounds USING rtree(id,minX,maxX,minY,maxY)");
+            auto counters=std::vector<std::uint8_t>(72);counters[3]=17;for(std::uint32_t i=1;i<=17;++i){const auto value=1000+i;for(int b=0;b<4;++b)counters[std::size_t(i)*4+b]=std::uint8_t(value>>(24-8*b));}
+            blob(db,"UPDATE Game SET uniqueIds=?1",counters);
+            auto body=from_hex("000101000002b80000444ebfbe444cf042c4671042c46c1fbe00003f800000000000000000000000000000c46c0000444e00000000000000ffffffff");
+            body[8]=1;body[26]=1;
+            auto part=from_hex("011f01000001ac000002b810884e44c1b26e88864c43239c5981e2000002b8004efffbfffcffdcd7c900010010000400");part.resize(43);part[1]=32;part[41]=0x75;part[42]=2;
+            blob(db,"INSERT INTO RigidBody VALUES(696,1,?1)",body);blob(db,"INSERT INTO ChildShape VALUES(428,696,?1)",part);sqlite3_close(db);
+            const auto state=scrapds::WorldState::load(database);const auto assets=scrapds::AssetDefinitions::load(fixture.path);const auto with_parts=scrapds::WorldCollision::from_world(state,&assets);
+            require(with_parts.coverage().part_boxes==1&&with_parts.coverage().unsupported_parts==0,"supported part asset was omitted from static collision");
+            const auto part_hit=with_parts.raycast(1,{-926,823.25,-0.5},{-922,823.25,-0.5});
+            require(part_hit&&part_hit->shape_id==428&&part_hit->body_id==696&&close(part_hit->point.x,-924.5),"asset part collision transform is incorrect");
+        }
         bool rejected=false;try{scene.raycast(4,{0,0,0},{0,0,0});}catch(const std::runtime_error&){rejected=true;}require(rejected,"zero-length ray accepted");
         rejected=false;try{scene.raycast(4,{0,0,0},{1e300,0,0});}catch(const std::runtime_error&){rejected=true;}require(rejected,"out-of-range ray accepted");
         rejected=false;try{scene.sweep_capsule(4,{0,0,0},{0,0,1},0,1);}catch(const std::runtime_error&){rejected=true;}require(rejected,"zero-radius capsule accepted");

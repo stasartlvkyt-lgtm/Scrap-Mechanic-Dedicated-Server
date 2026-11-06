@@ -481,7 +481,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
     std::optional<WorldPhysics> physics;
     std::optional<WorldCollision> character_collision;
     std::optional<OverworldTerrainStreamer> overworld_terrain;
-    if(native_players&&!native_physics)character_collision.emplace(WorldCollision::from_world(*native_world));
+    if(native_players&&!native_physics)character_collision.emplace(WorldCollision::from_world(*native_world,native_assets?&*native_assets:nullptr));
     if(native_players)overworld_terrain.emplace(*native_world,game,512);
     if(native_physics) {
         for(const auto& packet:replay->post)if(!packet.empty()&&packet[0]==24) {
@@ -866,7 +866,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             }
                             if(result.applied)++applied_commands;else ++rejected_commands;
                             if(world_mutated&&character_collision)try {
-                                character_collision.emplace(WorldCollision::from_world(*native_world));
+                                character_collision.emplace(WorldCollision::from_world(*native_world,native_assets?&*native_assets:nullptr));
                                 if(overworld_terrain)overworld_terrain->attach(*character_collision);
                             } catch(const std::exception& error) {
                                 character_collision.reset();

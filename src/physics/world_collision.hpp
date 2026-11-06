@@ -10,6 +10,7 @@
 
 namespace scrapds {
 class WorldState;
+class AssetDefinitions;
 struct TerrainVertex;
 struct CollisionBlock {
     std::uint32_t shape_id{}, body_id{};
@@ -20,7 +21,7 @@ struct CollisionBlock {
     std::array<double, 4> body_rotation_xyzw{0, 0, 0, 1};
 };
 struct CollisionCoverage {
-    std::uint64_t source_shapes{}, block_boxes{}, terrain_triangles{}, unsupported_parts{},
+    std::uint64_t source_shapes{}, block_boxes{}, part_boxes{}, part_cylinders{}, part_hulls{}, terrain_triangles{}, unsupported_parts{},
                   unsupported_shapes{}, degenerate_blocks{}, unsupported_bodies{}, unsupported_joints{}, worlds{};
 };
 struct CollisionBounds { Vec3 minimum, maximum; };
@@ -35,11 +36,11 @@ struct CapsuleMotion {
     std::vector<CollisionRayHit> contacts;
 };
 
-// Snapshot of decoded block collision geometry and resident static terrain. No part meshes,
-// dynamics/mass, constraints, character controllers, or gameplay simulation.
+// Snapshot of decoded block/asset-part geometry and resident terrain. Saved
+// part assets are static at their save pose; this is not body simulation.
 class WorldCollision {
 public:
-    static WorldCollision from_world(const WorldState& state);
+    static WorldCollision from_world(const WorldState& state,const AssetDefinitions* assets=nullptr);
     static WorldCollision from_blocks(const std::vector<CollisionBlock>& blocks);
     WorldCollision(WorldCollision&&) noexcept;
     WorldCollision& operator=(WorldCollision&&) noexcept;
@@ -49,9 +50,8 @@ public:
 
     const CollisionCoverage& coverage() const;
     std::optional<CollisionRayHit> raycast(std::uint16_t world_id, Vec3 start, Vec3 end) const;
-    // Sweep a vertical capsule by its centre through decoded block geometry.
-    // cylinder_height excludes the hemispherical caps; this query does not
-    // cover terrain, parts, or moving bodies omitted from this snapshot.
+    // Sweep a vertical capsule by its centre through decoded collision geometry.
+    // cylinder_height excludes the hemispherical caps.
     std::optional<CollisionRayHit> sweep_capsule(std::uint16_t world_id, Vec3 start, Vec3 end,double radius,double cylinder_height) const;
     // Sweep and slide through this collision snapshot; initial overlaps and
     // unsupported world geometry require a separate recovery/controller path.
