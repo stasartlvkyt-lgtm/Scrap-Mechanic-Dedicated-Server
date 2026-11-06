@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <string>
 #include <cmath>
+#include <iomanip>
+#include <sstream>
 
 namespace scrapds::net {
 namespace {
@@ -175,6 +177,14 @@ std::string character_displacement_violation(const std::array<float,3>& previous
     if(dz>8.0*elapsed_seconds+tolerance)return "character-upward-speed-limit";
     if(dz<-(50.0*elapsed_seconds+tolerance))return "character-fall-speed-limit";
     return {};
+}
+std::string format_character_asset_uuid(const std::array<std::uint8_t,16>& memory) {
+    std::ostringstream text;text<<std::hex<<std::setfill('0');
+    for(std::size_t i=0;i<memory.size();++i) {
+        if(i==4||i==6||i==8||i==10)text<<'-';
+        text<<std::setw(2)<<unsigned(memory[i]);
+    }
+    return text.str();
 }
 ServerCharacterUpdate parse_server_character_update(std::span<const std::uint8_t> packet) {
     if(packet.size()<2||packet[0]!=0x18)throw std::runtime_error("not a server character update");

@@ -783,10 +783,13 @@ diverged from the client. The revised cadence needs live-session confirmation.
   active server characters in the sender's world. It verifies the target
   against the live server character registry, changes the cached spawn state
   and broadcasts a type-6 NetObj state. Explicit colors are stored in the
-  server output world and restored after restart. Color `0` resets to the
-  captured player Character default (`0xffffffff`); other Character asset
-  defaults and complete inventory/tool authorization remain unimplemented.
-  This wire path has not been exercised by a live client.
+  server output world and restored after restart. CharacterSet definitions are
+  loaded from game JSON5 files; color `0` resolves the target asset's
+  `paint.defaultColor`, while the default player UUID keeps the captured white
+  fallback (`0xffffffff`). Definitions with `paint.enable=false` are rejected,
+  and unknown non-player assets are rejected. Tool ownership and broader NPC
+  targeting remain unimplemented. This wire path has not been exercised by a
+  live client.
 - Player-info Steam Inventory results are no longer copied into Player records
   before validation. After the GameServer Inventory API confirms the blob's
   owner SteamID, the server updates the linked Player entry, persists the

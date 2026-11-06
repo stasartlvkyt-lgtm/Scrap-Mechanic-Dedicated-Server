@@ -30,12 +30,19 @@ struct AssetDefinition {
     // Explicit maximum stack size from the game's shape definition.
     std::optional<std::uint32_t> stack_size;
 };
+struct CharacterAssetDefinition {
+    std::string uuid;
+    std::optional<bool> paint_enabled;
+    std::optional<std::uint32_t> default_paint_color_rgba;
+};
 class AssetDefinitions {
 public:
     static AssetDefinitions load(const std::filesystem::path& installation_or_pack);
     const AssetDefinition* find(const std::string& uuid) const;
+    const CharacterAssetDefinition* find_character(const std::string& uuid) const;
     std::size_t size() const { return entries_.size(); }
 private:
     std::map<std::string, AssetDefinition> entries_;
+    std::map<std::string, CharacterAssetDefinition> characters_;
 };
 }

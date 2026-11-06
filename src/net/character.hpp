@@ -24,6 +24,7 @@ struct CharacterUpdate {
 // horizontal, upward-jump, or downward-fall speeds plus a small quantization margin.
 std::string character_displacement_violation(const std::array<float,3>& previous,
     const std::array<float,3>& current,double elapsed_seconds);
+std::string format_character_asset_uuid(const std::array<std::uint8_t,16>& memory);
 
 // Parses the observed client-to-server 0x1e stream, including type 3/4
 // transforms, acknowledgement lists, and character IDs.

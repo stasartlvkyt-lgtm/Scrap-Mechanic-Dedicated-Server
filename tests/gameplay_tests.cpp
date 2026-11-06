@@ -31,8 +31,19 @@ int main(){try{
     const auto definitions=temp.p/"Data/Objects/Database/ShapeSets";std::filesystem::create_directories(definitions);
     {std::ofstream file(definitions/"blocks.shapeset");file<<R"({"blockList":[{"uuid":"00000000-0000-0000-0000-000000000000","color":"112233","name":"test","physicsMaterial":"Wood"},{"uuid":"a6c6ce30-dd47-4587-b475-085d55c6a3b4","color":"9b683a","name":"wood","physicsMaterial":"Wood","stackSize":20}]})";}
     {std::ofstream file(definitions/"parts.shapeset");file<<R"({"partList":[{"uuid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","color":"ffffff","name":"unsupported part","stackSize":5}]})";}
+    const auto character_definitions=temp.p/"Survival/Character/CharacterSets";std::filesystem::create_directories(character_definitions);
+    {std::ofstream file(character_definitions/"test.json");file<<R"({// JSON5 comments and trailing commas occur in game character sets.
+        "characters":[
+          {"uuid":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","paint":{"enable":true,"defaultColor":"035cff",},},
+          {"uuid":"cccccccc-cccc-cccc-cccc-cccccccccccc","paint":{"enable":false,"defaultColor":"007572ff"},},
+        ],
+    })";}
     auto assets=scrapds::AssetDefinitions::load(temp.p);require(assets.size()==3,"asset definition not loaded");
     require(assets.find("00000000-0000-0000-0000-000000000000")->default_color_abgr==0xff332211,"default color channel order");
+    const auto* paintable_character=assets.find_character("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+    require(paintable_character&&paintable_character->paint_enabled==true&&paintable_character->default_paint_color_rgba==0xffff5c03,"Character paint definition was not decoded");
+    const auto* nonpaintable_character=assets.find_character("cccccccc-cccc-cccc-cccc-cccccccccccc");
+    require(nonpaintable_character&&nonpaintable_character->paint_enabled==false&&nonpaintable_character->default_paint_color_rgba==0xff727500,"Character disabled paint/default color was not decoded");
     sqlite3* db=nullptr;const auto source=temp.p/"source.db";require(sqlite3_open(source.string().c_str(),&db)==SQLITE_OK,"fixture open");
     sql(db,"CREATE TABLE Game(savegameversion INTEGER,flags INTEGER,seed INTEGER,gametick INTEGER,uniqueIds BLOB);INSERT INTO Game VALUES(30,1,2,3,NULL);CREATE TABLE RigidBody(id INTEGER PRIMARY KEY,worldId INTEGER,data BLOB);CREATE TABLE ChildShape(id INTEGER PRIMARY KEY,bodyId INTEGER,data BLOB);CREATE TABLE Joint(id INTEGER PRIMARY KEY,childShapeIdA INTEGER,childShapeIdB INTEGER,data BLOB);CREATE VIRTUAL TABLE RigidBodyBounds USING rtree(id,minX,maxX,minY,maxY);INSERT INTO RigidBodyBounds VALUES(7,-20,20,-20,20)");
     scrapds::Blob counters(72);word(counters,0,17);for(std::size_t i=1;i<=17;++i)word(counters,i*4,1000+std::uint32_t(i));word(counters,4,100);word(counters,12,200);insert(db,"UPDATE Game SET uniqueIds=?1",counters);

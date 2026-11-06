@@ -58,9 +58,11 @@ Survival. Это всё ещё **не** полноценный dedicated server:
 > В `--native-players` добавлен явный `PaintCharacter` для активного персонажа
 > того же мира: сервер сверяет runtime ID, обновляет сохранённый на время
 > процесса spawn-state и рассылает NetObj state. Цвет сохраняется в копии мира
-> сервера и восстанавливается при следующем запуске. Сброс использует цвет
-> `0xffffffff` из захваченного player Character; default для других Character
-> assets и полная проверка прав на инструмент всё ещё не реализованы.
+> сервера и восстанавливается при следующем запуске. CharacterSet JSON5
+> загружаются по UUID: reset использует `paint.defaultColor`, а
+> `paint.enable=false` запрещает операцию; нулевой UUID игрока сохраняет
+> подтверждённый цвет `0xffffffff`. Таргетинг NPC и проверка владения
+> инструментом всё ещё не реализованы.
 
 ---
 
@@ -1612,7 +1614,8 @@ python scrapds/tools/probe/launch_connect.py `
 
 ❌ Пока не работает:
 
-- PaintCharacter для других Character assets и полная проверка owner/tool;
+- PaintCharacter для NPC: target сейчас должен быть активным player Character;
+  полная проверка owner/tool также отсутствует;
 - инвентарь и контейнеры, посадка в кресло, held-tool/третье лицо;
 - серверная физика и авторитет персонажей;
 - серверный Lua/game mode и persistence игрового прогресса.
@@ -1712,7 +1715,9 @@ wire (9 байт):      1E 70 <tick LE32> 00 00 00   (LZ4 block, byte 0 сохр
 1. Реальный vanilla-client тест постройки и её появления у второго
    клиента; синтетический Steam peer сейчас не инициализируется через
    доступную пользовательскую Steam-сессию.
-2. PaintCharacter defaults for other Character assets and tool authorization; extend the new block-collision movement guard to terrain, parts and dynamic obstacles, and verify ownership against Player state.
+2. Проверить PaintCharacter с live-клиентом, реализовать проверку
+   инструмента/владения и NPC-таргетинг; расширить collision guard на terrain,
+   детали и динамические препятствия, сверить Character с Player state.
 3. Survival container transfers, crafting, harvestable/character actions,
    seating и held-tool state; сверить фактические расходы/возвраты предметов
    с игрой.

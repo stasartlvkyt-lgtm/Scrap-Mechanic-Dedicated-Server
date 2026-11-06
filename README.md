@@ -114,9 +114,11 @@ Unknown BlobData managers still come from the capture; it also supplies
 protocol layout and asset-catalog indices. Survival initialization has not yet
 been verified with a live client. Explicit-color `PaintCharacter` updates are
 relayed for active characters in the same world. Explicit character colors are
-saved in the output world and restored on the next server start. Reset uses the
-captured player Character's default color (`0xffffffff`); defaults for other
-Character assets and full tool/ownership authorization remain unfinished.
+saved in the output world and restored on the next server start. CharacterSet
+definitions provide per-asset reset colors, and definitions with
+`paint.enable=false` are rejected. The default player UUID uses the captured
+white color (`0xffffffff`). NPC targeting and full tool/ownership authorization
+remain unfinished.
 Steam Inventory blobs from player-info are held out of Player replication until
 the GameServer Inventory API confirms the owning SteamID; verified blobs are
 then saved and sent as a Player update. The asynchronous Player update has not

@@ -111,8 +111,42 @@ AssetDefinitions AssetDefinitions::load(const std::filesystem::path& root) {
             }
         }
     }
+    for(const auto* branch:{"Data","Survival"}) {
+        const auto directory=root/branch/"Character"/"CharacterSets";
+        if(!std::filesystem::is_directory(directory))continue;
+        std::vector<std::filesystem::path> paths;
+        for(const auto& item:std::filesystem::recursive_directory_iterator(directory))
+            if(item.is_regular_file()&&item.path().extension()==".json")paths.push_back(item.path());
+        std::sort(paths.begin(),paths.end());
+        for(const auto& path:paths) {
+            if(std::filesystem::file_size(path)>16*1024*1024)throw std::runtime_error("Character definition file exceeds 16 MiB");
+            std::ifstream file(path,std::ios::binary);
+            if(!file)throw std::runtime_error("Cannot read Character definitions");
+            std::string source{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+            sqlite3_stmt* statement=nullptr;
+            const char* query="SELECT json_extract(value,'$.uuid'),json_type(value,'$.paint.enable'),json_extract(value,'$.paint.enable'),json_extract(value,'$.paint.defaultColor') FROM json_each(?1,'$.characters')";
+            const auto prepared=sqlite3_prepare_v2(db.get(),query,-1,&statement,nullptr);
+            std::unique_ptr<sqlite3_stmt,decltype(&sqlite3_finalize)> s(statement,sqlite3_finalize);
+            if(prepared!=SQLITE_OK)throw std::runtime_error("SQLite JSON reader is unavailable");
+            sqlite3_bind_text64(s.get(),1,source.data(),source.size(),SQLITE_TRANSIENT,SQLITE_UTF8);
+            int status;
+            while((status=sqlite3_step(s.get()))==SQLITE_ROW) {
+                CharacterAssetDefinition character;
+                character.uuid=text(s.get(),0);
+                if(character.uuid.size()!=36)throw std::runtime_error("Invalid Character UUID in definitions");
+                if(sqlite3_column_type(s.get(),1)!=SQLITE_NULL) {
+                    if(text(s.get(),1)!="true"&&text(s.get(),1)!="false")throw std::runtime_error("Invalid Character paint enable flag");
+                    character.paint_enabled=sqlite3_column_int(s.get(),2)!=0;
+                }
+                character.default_paint_color_rgba=color(text(s.get(),3));
+                result.characters_.insert_or_assign(character.uuid,std::move(character));
+            }
+            if(status!=SQLITE_DONE)throw std::runtime_error("Invalid Character definition JSON: "+std::string(sqlite3_errmsg(db.get())));
+        }
+    }
     if(result.entries_.empty())throw std::runtime_error("No Data/Survival shape definitions found");
     return result;
 }
 const AssetDefinition* AssetDefinitions::find(const std::string& uuid) const { const auto it=entries_.find(uuid); return it==entries_.end()?nullptr:&it->second; }
+const CharacterAssetDefinition* AssetDefinitions::find_character(const std::string& uuid) const { const auto it=characters_.find(uuid); return it==characters_.end()?nullptr:&it->second; }
 }

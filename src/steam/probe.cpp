@@ -836,7 +836,14 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                     if(target==live_players.end())result={false,"character-not-active",{}};
                                     else if(player_worlds.at(target->first)!=player_worlds.at(message->connection))result={false,"character-in-another-world",{}};
                                     else try {
-                                        const auto color=paint->color_rgba?paint->color_rgba:captured_character_default_color;
+                                        const auto asset_uuid=net::format_character_asset_uuid(target->second.character_state.asset_uuid_memory);
+                                        const auto* definition=native_assets?native_assets->find_character(asset_uuid):nullptr;
+                                        if(asset_uuid!="00000000-0000-0000-0000-000000000000"&&(!definition||definition->paint_enabled!=true))
+                                            throw std::runtime_error(definition?"character-paint-disabled-by-asset":"character-asset-unavailable");
+                                        const auto color=paint->color_rgba?paint->color_rgba:
+                                            definition&&definition->default_paint_color_rgba?*definition->default_paint_color_rgba:
+                                            asset_uuid=="00000000-0000-0000-0000-000000000000"?captured_character_default_color:0u;
+                                        if(!color)throw std::runtime_error("character-default-color-unavailable");
                                         const auto owner=connection_steam_ids.find(target->first);
                                         if(owner==connection_steam_ids.end())throw std::runtime_error("character-owner-unavailable");
                                         auto updated=target->second;

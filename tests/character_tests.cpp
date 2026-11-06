@@ -72,6 +72,8 @@ int main() {
         if(!state.has_character_state) throw std::runtime_error("captured movement had no character state");
         if(state.character_id!=1) throw std::runtime_error("captured movement character ID mismatch");
         const std::array<float,3> origin{};
+        const std::array<std::uint8_t,16> known_character_uuid{0x04,0x76,0x1b,0x4a,0xa8,0x3e,0x47,0x36,0xb5,0x65,0x12,0x0b,0xc7,0x76,0xed,0xb2};
+        if(scrapds::net::format_character_asset_uuid(known_character_uuid)!="04761b4a-a83e-4736-b565-120bc776edb2")throw std::runtime_error("Character asset UUID text conversion mismatch");
         if(!scrapds::net::character_displacement_violation(origin,{0.45f,0,0},0.025).empty())throw std::runtime_error("allowed horizontal motion was rejected");
         if(scrapds::net::character_displacement_violation(origin,{0.451f,0,0},0.025)!="character-horizontal-speed-limit")throw std::runtime_error("excess horizontal motion was accepted");
         if(!scrapds::net::character_displacement_violation(origin,{0,0,0.5f},0.025).empty())throw std::runtime_error("jump impulse displacement was rejected");
