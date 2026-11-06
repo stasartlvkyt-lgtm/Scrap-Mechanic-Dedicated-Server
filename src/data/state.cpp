@@ -88,6 +88,43 @@ std::uint32_t container_quantity(const std::array<std::uint8_t,22>& entry) {
 void write_container_quantity(Blob& data,std::size_t offset,std::uint32_t quantity) {
     for(int i=0;i<4;++i)data.at(offset+i)=std::uint8_t(quantity>>(24-8*i));
 }
+void append_be16(Blob& data,std::uint16_t value) {
+    data.push_back(std::uint8_t(value>>8));data.push_back(std::uint8_t(value));
+}
+void append_be32(Blob& data,std::uint32_t value) {
+    for(int shift=24;shift>=0;shift-=8)data.push_back(std::uint8_t(value>>shift));
+}
+Blob default_player_container(std::uint32_t id) {
+    constexpr std::array<std::string_view,6> starter_items{
+        "a6c6ce30-dd47-4587-b475-085d55c6a3b4",
+        "df953d9c-234f-4ac2-af5e-f0490b223e71",
+        "69e362c3-32aa-4cd1-adc0-dcfc47b92c0d",
+        "4a1b886b-913e-4aad-b5b6-6e41b0db23a6",
+        "77c2687c-2e13-4df8-996a-96fb26d75ee0",
+        "1bfccc0a-828f-475c-882c-87d5a96054c9"
+    };
+    Blob data{4,0,1};append_be32(data,id);append_be16(data,30);
+    for(std::size_t slot=0;slot<30;++slot) {
+        append_be16(data,UINT16_MAX);data.insert(data.end(),16,0);append_be32(data,UINT32_MAX);
+    }
+    for(std::size_t index=0;index<starter_items.size();++index) {
+        const auto uuid=starter_items[index];std::array<std::uint8_t,16> saved{};std::size_t n=0;
+        auto hex=[](char c)->std::uint8_t {if(c>='0'&&c<='9')return std::uint8_t(c-'0');if(c>='a'&&c<='f')return std::uint8_t(c-'a'+10);if(c>='A'&&c<='F')return std::uint8_t(c-'A'+10);throw std::logic_error("invalid default inventory UUID");};
+        for(std::size_t at=0;at<uuid.size();) {
+            if(uuid[at]=='-'){++at;continue;}
+            if(at+1>=uuid.size()||n>=saved.size())throw std::logic_error("invalid default inventory UUID length");
+            saved[n++]=std::uint8_t((hex(uuid[at])<<4)|hex(uuid[at+1]));at+=2;
+        }
+        if(n!=saved.size())throw std::logic_error("invalid default inventory UUID width");
+        std::reverse(saved.begin(),saved.end());
+        const auto offset=std::size_t(9)+(index+2)*22;
+        data[offset]=0xff;data[offset+1]=0xff;
+        std::copy(saved.begin(),saved.end(),data.begin()+static_cast<std::ptrdiff_t>(offset+2));
+        write_container_quantity(data,offset+18,1);
+    }
+    data.insert(data.end(),4,0);
+    return data;
+}
 void backup(sqlite3* source, sqlite3* dest) {
     auto* raw = sqlite3_backup_init(dest, "main", source, "main");
     if (!raw) fail(dest, "Initializing native world snapshot");
@@ -170,6 +207,67 @@ std::uint32_t WorldState::reserve_player_id() {
     sqlite3_bind_blob64(update.get(),1,counters.data(),counters.size(),SQLITE_TRANSIENT);
     if(step(db,update.get())!=SQLITE_DONE||sqlite3_changes(db)!=1)throw std::runtime_error("cannot-persist-player-id-counter");
     transaction.commit();return id;
+}
+std::uint32_t WorldState::reserve_container_id() {
+    auto* db=impl_->db.get();Transaction transaction(db);
+    auto query=prepare(db,"SELECT uniqueIds FROM Game");
+    if(step(db,query.get())!=SQLITE_ROW)throw std::runtime_error("missing-unique-id-counters");
+    auto counters=blob(query.get(),0);query.reset();
+    auto read32=[&](std::size_t at){if(at>counters.size()||counters.size()-at<4)throw std::runtime_error("invalid-unique-id-counters");return (std::uint32_t(counters[at])<<24)|(std::uint32_t(counters[at+1])<<16)|(std::uint32_t(counters[at+2])<<8)|counters[at+3];};
+    const auto count=read32(0);
+    if(count<9||count>17||counters.size()!=4ull*(count+1))throw std::runtime_error("invalid-unique-id-counters");
+    constexpr std::size_t offset=20;const auto id=read32(offset);
+    if(!id||id==UINT32_MAX)throw std::runtime_error("container-id-exhausted");
+    for(int i=0;i<4;++i)counters[offset+i]=std::uint8_t((id+1)>>(24-8*i));
+    auto update=prepare(db,"UPDATE Game SET uniqueIds=?1");
+    if(sqlite3_bind_blob64(update.get(),1,counters.data(),counters.size(),SQLITE_TRANSIENT)!=SQLITE_OK||
+       step(db,update.get())!=SQLITE_DONE||sqlite3_changes(db)!=1)throw std::runtime_error("cannot-persist-container-id-counter");
+    transaction.commit();return id;
+}
+std::uint32_t WorldState::ensure_player_inventory_container(std::uint64_t steam_id,std::uint32_t preferred_container_id) {
+    if(!steam_id||steam_id>INT64_MAX)throw std::invalid_argument("invalid-player-inventory-owner");
+    auto* db=impl_->db.get();Transaction transaction(db);
+    const bool had_container_table=impl_->counts.contains("Container");
+    execute(db,"CREATE TABLE IF NOT EXISTS Container(id INTEGER PRIMARY KEY,data BLOB)");
+    execute(db,"CREATE TABLE IF NOT EXISTS scrapds_player_inventory_v1 (steam_id INTEGER PRIMARY KEY, container_id INTEGER NOT NULL UNIQUE)");
+    auto mapping=prepare(db,"SELECT container_id FROM scrapds_player_inventory_v1 WHERE steam_id=?1");
+    if(sqlite3_bind_int64(mapping.get(),1,static_cast<sqlite3_int64>(steam_id))!=SQLITE_OK)fail(db,"Binding player inventory owner");
+    if(step(db,mapping.get())==SQLITE_ROW) {
+        const auto mapped=id(mapping.get(),0);
+        if(!impl_->container_records.contains(mapped))throw std::runtime_error("player-inventory-mapping-points-to-missing-container");
+        transaction.commit();return mapped;
+    }
+    std::optional<std::uint32_t> selected;
+    if(preferred_container_id&&preferred_container_id!=UINT32_MAX&&impl_->container_records.contains(preferred_container_id)) {
+        auto owner=prepare(db,"SELECT steam_id FROM scrapds_player_inventory_v1 WHERE container_id=?1");
+        if(sqlite3_bind_int64(owner.get(),1,preferred_container_id)!=SQLITE_OK)fail(db,"Binding preferred player container");
+        if(step(db,owner.get())==SQLITE_DONE)selected=preferred_container_id;
+    }
+    if(!selected)selected=reserve_container_id();
+    if(impl_->container_ids.contains(*selected)||impl_->container_records.contains(*selected))
+        throw std::runtime_error("container-id-collision");
+    const auto data=default_player_container(*selected);
+    auto insert_container=prepare(db,"INSERT INTO Container(id,data) VALUES(?1,?2)");
+    if(sqlite3_bind_int64(insert_container.get(),1,*selected)!=SQLITE_OK||
+       sqlite3_bind_blob64(insert_container.get(),2,data.data(),data.size(),SQLITE_TRANSIENT)!=SQLITE_OK||
+       step(db,insert_container.get())!=SQLITE_DONE)throw std::runtime_error("cannot-create-player-container");
+    auto insert_mapping=prepare(db,"INSERT INTO scrapds_player_inventory_v1(steam_id,container_id) VALUES(?1,?2)");
+    if(sqlite3_bind_int64(insert_mapping.get(),1,static_cast<sqlite3_int64>(steam_id))!=SQLITE_OK||
+       sqlite3_bind_int64(insert_mapping.get(),2,*selected)!=SQLITE_OK||step(db,insert_mapping.get())!=SQLITE_DONE)
+        throw std::runtime_error("cannot-store-player-inventory-mapping");
+    auto count=prepare(db,"SELECT count(*) FROM Container");
+    if(step(db,count.get())!=SQLITE_ROW)throw std::runtime_error("cannot-count-player-containers");
+    const auto containers=static_cast<std::uint64_t>(sqlite3_column_int64(count.get(),0));
+    auto mapping_count=prepare(db,"SELECT count(*) FROM scrapds_player_inventory_v1");
+    if(step(db,mapping_count.get())!=SQLITE_ROW)throw std::runtime_error("cannot-count-player-inventory-mappings");
+    const auto mappings=static_cast<std::uint64_t>(sqlite3_column_int64(mapping_count.get(),0));
+    auto record=decode_stored_container(*selected,data);
+    if(!record.supported_layout)throw std::logic_error("generated player Container did not decode");
+    transaction.commit();
+    impl_->container_ids.insert(*selected);impl_->container_records.emplace(*selected,std::move(record));
+    impl_->counts["Container"]=containers;impl_->counts["scrapds_player_inventory_v1"]=mappings;
+    (void)had_container_table;
+    return *selected;
 }
 
 std::map<std::uint64_t,StoredPlayerSnapshot> WorldState::player_snapshots() const {
@@ -404,8 +502,12 @@ void WorldState::spend_container_slot(std::uint32_t container_id,std::uint32_t s
     if(*available<quantity)throw std::runtime_error("insufficient-container-slot-quantity");
     auto updated=container->second.data;
     constexpr std::size_t header_size=9,entry_size=22,quantity_offset=18;
-    const auto offset=header_size+std::size_t(slot)*entry_size+quantity_offset;
-    write_container_quantity(updated,offset,*available==quantity?UINT32_MAX:*available-quantity);
+    const auto entry_offset=header_size+std::size_t(slot)*entry_size;
+    if(*available==quantity) {
+        updated[entry_offset]=0xff;updated[entry_offset+1]=0xff;
+        std::fill_n(updated.begin()+static_cast<std::ptrdiff_t>(entry_offset+2),16,0);
+        write_container_quantity(updated,entry_offset+quantity_offset,UINT32_MAX);
+    } else write_container_quantity(updated,entry_offset+quantity_offset,*available-quantity);
     replace_container_blob(container_id,std::move(updated));
 }
 const std::set<std::uint32_t>& WorldState::container_ids() const { return impl_->container_ids; }

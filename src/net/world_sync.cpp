@@ -79,6 +79,47 @@ std::vector<std::uint8_t> record_data(const NetObjectRecord& record) {
     if (data.size() + 2 > 32767) throw std::runtime_error("NetObj record exceeds 32767-byte frame limit");
     return data;
 }
+class BitWriter {
+public:
+    void bit(bool value) {
+        if((position_&7u)==0)bytes_.push_back(0);
+        if(value)bytes_.back()|=std::uint8_t(0x80u>>(position_&7u));
+        ++position_;
+    }
+    void bits(std::uint32_t value,unsigned count) {
+        if(count>32)throw std::invalid_argument("invalid-container-bit-width");
+        for(unsigned i=count;i>0;--i)bit(((value>>(i-1))&1u)!=0);
+    }
+    void little_endian_bits(std::uint64_t value,unsigned count) {
+        if(count>64)throw std::invalid_argument("invalid-container-scalar-width");
+        for(unsigned byte=0;byte<(count+7)/8;++byte) {
+            const auto raw=std::uint8_t(value>>(byte*8));
+            const auto in_byte=std::min(8u,count-byte*8);
+            for(unsigned bit_index=0;bit_index<in_byte;++bit_index)
+                bit(((raw>>(7-bit_index))&1u)!=0);
+        }
+    }
+    void raw(std::span<const std::uint8_t> bytes) {
+        for(const auto value:bytes)for(int bit_index=7;bit_index>=0;--bit_index)bit(((value>>bit_index)&1u)!=0);
+    }
+    std::vector<std::uint8_t> finish() && { return std::move(bytes_); }
+private:
+    std::vector<std::uint8_t> bytes_;
+    std::size_t position_{};
+};
+bool container_slot_empty(const std::array<std::uint8_t,22>& entry) {
+    return std::all_of(entry.begin()+2,entry.begin()+18,[](std::uint8_t value){return value==0;});
+}
+void write_container_slot_uuid(BitWriter& bits,const std::array<std::uint8_t,22>& entry) {
+    if(container_slot_empty(entry)){bits.bits(0,2);return;}
+    bits.bits(1,2);bits.raw(std::span<const std::uint8_t>(entry).subspan(2,16));
+}
+std::uint32_t container_slot_quantity(const std::array<std::uint8_t,22>& entry) {
+    return (std::uint32_t(entry[18])<<24)|(std::uint32_t(entry[19])<<16)|(std::uint32_t(entry[20])<<8)|entry[21];
+}
+std::uint16_t container_slot_type(const std::array<std::uint8_t,22>& entry) {
+    return std::uint16_t((std::uint16_t(entry[0])<<8)|entry[1]);
+}
 }
 BlobDataEntry parse_saved_blob_data(std::span<const std::uint8_t> bytes) {
     if (bytes.size() > world_sync_limit) throw std::runtime_error("BlobData entry exceeds 64 MiB");
@@ -268,6 +309,39 @@ NetObjectRecord make_character_state(std::uint32_t id,const CharacterInitialStat
     NetObjectRecord result;result.operation=3;result.type=6;result.id=id;
     result.payload=serialize_character_initial_state(character);return result;
 }
+NetObjectRecord make_container_creation(const scrapds::StoredContainer& container) {
+    if(!container.id||container.id==UINT32_MAX||!container.supported_layout||
+       container.serialized_entries.size()!=container.entry_count||container.entry_count>1023)
+        throw std::invalid_argument("invalid-container-create-state");
+    BitWriter bits;
+    bits.little_endian_bits(container.entry_count,10);
+    bits.bit(false); // No slot filter (the PlayerManager default is 0xffff).
+    for(const auto& entry:container.serialized_entries)write_container_slot_uuid(bits,entry);
+    for(const auto& entry:container.serialized_entries)
+        if(!container_slot_empty(entry))bits.little_endian_bits(container_slot_quantity(entry),32);
+    for(const auto& entry:container.serialized_entries)
+        if(!container_slot_empty(entry))bits.little_endian_bits(container_slot_type(entry),16);
+    bits.bit(false); // No auxiliary UUID list.
+    NetObjectRecord result;result.operation=1;result.type=4;result.subtype=0;result.id=container.id;
+    result.payload=std::move(bits).finish();return result;
+}
+NetObjectRecord make_container_slot_state(const scrapds::StoredContainer& container,std::uint32_t slot) {
+    if(!container.id||container.id==UINT32_MAX||!container.supported_layout||
+       container.serialized_entries.size()!=container.entry_count||slot>=container.entry_count)
+        throw std::invalid_argument("invalid-container-slot-state");
+    const auto& entry=container.serialized_entries[slot];BitWriter bits;
+    bits.bit(false);bits.bit(true);bits.bit(false);
+    bits.little_endian_bits(1,10);
+    write_container_slot_uuid(bits,entry);
+    if(!container_slot_empty(entry)) {
+        bits.little_endian_bits(container_slot_quantity(entry),32);
+        bits.little_endian_bits(container_slot_type(entry),16);
+    }
+    bits.little_endian_bits(slot,10);
+    bits.bit(false);
+    NetObjectRecord result;result.operation=3;result.type=4;result.id=container.id;
+    result.payload=std::move(bits).finish();return result;
+}
 void merge_asset_catalog(InitialAssetCatalog& target,const InitialAssetCatalog& incoming) {
     auto merged=target;
     auto merge=[](auto& destination,const auto& source) {
@@ -388,18 +462,20 @@ NativeInitialWorld rebuild_initial_world(const NetObjectPacket& captured, const 
 }
 NativeInitialWorld rebuild_live_initial_world(const NetObjectPacket& captured, const scrapds::WorldState& world, std::uint32_t tick, const InitialAssetCatalog& catalog) {
     if (captured.message_id != 21) throw std::runtime_error("live initial-world bootstrap requires NetObj ID21");
-    std::set<std::uint32_t> bodies, shapes, joints;
+    std::set<std::uint32_t> bodies, shapes, joints, containers;
     for (const auto& record : captured.records) {
         if (record.operation != 1) continue;
         if (record.type == 0) bodies.insert(record.id);
         else if (record.type == 1) shapes.insert(record.id);
         else if (record.type == 2) joints.insert(record.id);
+        else if (record.type == 4) containers.insert(record.id);
     }
-    std::vector<NetObjectRecord> body_creates, shape_creates, shape_states, body_states, joint_creates, joint_states;
+    std::vector<NetObjectRecord> body_creates, shape_creates, shape_states, body_states, joint_creates, joint_states, container_creates;
     NetObjectPacket expanded = captured;
     // The replay packet is a layout/catalog template. Drop stale world objects
     // from it so deletes and replacement saves don't resurrect captured data.
     std::erase_if(expanded.records,[&](const NetObjectRecord& record) {
+        if(record.type==4&&record.operation==3)return true;
         if(record.operation!=1&&record.operation!=3)return false;
         if(record.type==0)return !world.bodies().contains(record.id);
         if(record.type==1)return !world.shapes().contains(record.id);
@@ -407,6 +483,13 @@ NativeInitialWorld rebuild_live_initial_world(const NetObjectPacket& captured, c
         if(record.type==4)return !world.container_ids().contains(record.id);
         return false;
     });
+    for(auto& record:expanded.records)if(record.operation==1&&record.type==4) {
+        const auto container=world.containers().find(record.id);
+        if(container==world.containers().end())throw std::runtime_error("captured Container has no save row");
+        if(container->second.supported_layout)record=make_container_creation(container->second);
+    }
+    for(const auto& [id,container]:world.containers())if(!containers.contains(id)&&container.supported_layout)
+        container_creates.push_back(make_container_creation(container));
     for (const auto& [id, body] : world.bodies()) {
         if (bodies.contains(id)) continue;
         if (body.data.size() != 60 || body.data[0] != 0 || body.data[1] != 1 || body.data[2] != 1) throw std::runtime_error("new dynamic or unknown body lacks native runtime state");
@@ -473,6 +556,7 @@ NativeInitialWorld rebuild_live_initial_world(const NetObjectPacket& captured, c
     insert_group(3, 0, body_states);
     insert_group(1, 2, joint_creates);
     insert_group(3, 2, joint_states);
+    insert_group(1, 4, container_creates);
     return rebuild_initial_world(expanded, world, tick, catalog);
 }
 }

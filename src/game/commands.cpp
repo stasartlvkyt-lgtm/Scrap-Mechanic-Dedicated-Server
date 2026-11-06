@@ -16,7 +16,7 @@ std::string joint_uuid(const Blob& data) {
     return uuid.str();
 }
 }
-static CommandResult apply_game_command_impl(WorldState& world,const AssetDefinitions& assets,const net::GameCommand& command, std::uint16_t world_id) {
+static CommandResult apply_game_command_impl(WorldState& world,const AssetDefinitions& assets,const net::GameCommand& command, std::uint16_t world_id,std::optional<std::uint32_t> player_container_id) {
     if(const auto* remove_joint=std::get_if<net::RemoveJointCommand>(&command)) {
         // The vanilla handler returns the joint item through an inventory
         // transaction. Until that transaction is modeled, only expose the
@@ -67,6 +67,8 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
         return result;
     }
     if(const auto* build=std::get_if<net::BuildShapeCommand>(&command)) {
+        const auto mode=world.metadata().flags;
+        if(mode!=1&&mode!=14)return {false,"unsupported-game-mode-for-building",{}};
         if(build->kind!=2&&build->kind!=4)return {false,"unsupported-build-kind",{}};
         if(build->axis_a!=std::array<std::int32_t,3>{1,0,0}||build->axis_b!=std::array<std::int32_t,3>{0,0,1})return {false,"unsupported-build-orientation",{}};
         if(build->kind==2&&(build->body_id||build->child_shape_id))return {false,"new-body-build-has-target",{}};
@@ -83,10 +85,28 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
         if(build->kind==4)request.body_id=build->body_id;
         request.world_id=world_id;request.uuid=build->shape_uuid;request.cell_position=build->cell_position;
         request.dimensions=build->block_dimensions;request.color_abgr=*definition->default_color_abgr;
+        std::uint32_t item_cost=0;
+        if(mode==14) {
+            if(!player_container_id)return {false,"player-inventory-unavailable",{}};
+            if(build->inventory_slot<0)return {false,"invalid-inventory-slot",{}};
+            std::uint64_t volume=1;
+            for(const auto dimension:build->block_dimensions) {
+                if(dimension<=0||dimension>256)return {false,"invalid-block-dimensions",{}};
+                volume*=static_cast<std::uint32_t>(dimension);
+            }
+            if(volume>UINT32_MAX||!build->quantity||build->quantity!=volume)return {false,"invalid-build-quantity",{}};
+            item_cost=static_cast<std::uint32_t>(volume);
+        }
         try {
             const auto created=world.create_block(request);
             CommandResult result{true,"applied",{}, {}, {created.shape_id}};
             if(created.created_body)result.created_bodies.push_back(created.body_id);
+            if(mode==14) {
+                std::array<std::uint8_t,16> item_uuid{};
+                std::reverse_copy(build->inventory_uuid.begin(),build->inventory_uuid.end(),item_uuid.begin());
+                world.spend_container_slot(*player_container_id,static_cast<std::uint32_t>(build->inventory_slot),item_uuid,item_cost);
+                result.changed_container_slots.push_back({*player_container_id,static_cast<std::uint32_t>(build->inventory_slot)});
+            }
             return result;
         } catch(const std::runtime_error& error) {return {false,error.what(),{}};}
     }
@@ -212,9 +232,9 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
     world.replace_shape_blobs(std::move(mutations));
     return result;
 }
-CommandResult apply_game_command(WorldState& world,const AssetDefinitions& assets,const net::GameCommand& command,std::uint16_t world_id) {
+CommandResult apply_game_command(WorldState& world,const AssetDefinitions& assets,const net::GameCommand& command,std::uint16_t world_id,std::optional<std::uint32_t> player_container_id) {
     CommandResult result;
-    world.atomic([&] { result=apply_game_command_impl(world,assets,command,world_id); return result.applied; });
+    world.atomic([&] { result=apply_game_command_impl(world,assets,command,world_id,player_container_id); return result.applied; });
     return result;
 }
 }

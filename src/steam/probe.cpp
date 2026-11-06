@@ -448,8 +448,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
     std::vector<std::string> events,messages,control_events,game_events;std::set<Handle> accepted,challenged,authenticated,gameinfo_sent,join_accepted,game_started;std::map<Handle,std::uint64_t> connection_steam_ids;std::map<std::uint64_t,std::size_t> active_steam_connections;std::map<Handle,net::PlayerInfo> player_infos;std::map<Handle,std::vector<std::uint8_t>> pending_inventory_results;net::CharacterStateTracker character_states;net::ServerCharacters server_characters;std::map<Handle,PlayerSpawnPackets> live_players;
     std::map<std::uint64_t,PlayerSpawnPackets> offline_players;
     if(native_players)for(const auto& [owner,snapshot]:native_world->player_snapshots()) {
-        auto restored=restore_player_snapshot(owner,snapshot);
-        if(restored.player_before!=snapshot.unlinked_packet)native_world->store_player_snapshot(owner,snapshot.player_id,restored.player_before,false);
+        auto restored=restore_player_snapshot(*native_world,owner,snapshot,static_cast<std::uint32_t>(native_world->metadata().tick));
         offline_players.emplace(owner,std::move(restored));
     }
     std::map<std::uint64_t,std::uint32_t> player_colors;
@@ -472,6 +471,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
     }
     // A removal is valid only for peers that received the complete spawn.
     std::map<Handle,std::set<Handle>> visible_players;
+    std::map<Handle,std::set<std::uint32_t>> visible_containers;
     std::uint64_t total_bytes{},total_messages{},captured_bytes{},applied_commands{},rejected_commands{};bool finished{};Authentication authentication{};
     std::optional<ReplayPackets> replay;
     if(!replay_dir.empty())replay=load_replay(replay_dir);
@@ -595,11 +595,20 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
         }
         return packet;
     };
+    auto remember_container_creates=[&](Handle peer,const std::vector<std::uint8_t>& packet,auto&& recurse)->void {
+        if(packet.empty())return;
+        if(packet[0]==29){for(const auto& child:net::split_world_aggregate(packet))recurse(peer,child,recurse);return;}
+        if(packet[0]!=21&&packet[0]!=22)return;
+        for(const auto& record:net::parse_net_object_packet(packet).records)
+            if(record.operation==1&&record.type==4)visible_containers[peer].insert(record.id);
+    };
     auto send_replay=[&](Handle peer,const std::vector<std::uint8_t>& packet,const char* kind) {
         if(native_physics&&!packet.empty()&&packet[0]==24)return true;
         auto rebuilt=native_packet(packet,native_packet);
         if(native_players) {auto filtered=strip_replay_players(rebuilt);if(!filtered)return true;rebuilt=std::move(*filtered);}
-        return send_game(peer,rebuilt,kind);
+        const auto sent=send_game(peer,rebuilt,kind);
+        if(sent&&native_players)remember_container_creates(peer,rebuilt,remember_container_creates);
+        return sent;
     };
     auto flush_locations=[&] {
         if(!native_players||dirty_locations.empty())return;
@@ -723,6 +732,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             PlayerSpawnSpec spec;spec.steam_id=message->peer.steam_id();spec.info=info;spec.character=*spawn_template;spec.character_state.active=true;
                             if(const auto prior=offline_players.find(spec.steam_id);prior!=offline_players.end()){
                                 spec.existing_player_id=prior->second.player_id;spec.character_state=prior->second.character_state;spec.character_state.active=true;
+                                spec.player_state_words=prior->second.player_state_words;spec.player_flags=prior->second.player_flags;
                                 if(prior->second.info.inventory_verified) {
                                     spec.info.inventory_kind=prior->second.info.inventory_kind;
                                     spec.info.inventory_result=prior->second.info.inventory_result;
@@ -758,6 +768,12 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                     auto character_update=spawn.character_update;
                                     const auto owner=connection_steam_ids.find(subject);
                                     if(owner!=connection_steam_ids.end())if(const auto latest=server_characters.latest(owner->second))character_update=character_spawn_at_latest_position(spawn,*latest);
+                                    if(spawn.inventory_container_id!=UINT32_MAX&&!visible_containers[peer].contains(spawn.inventory_container_id)) {
+                                        if(spawn.container_creation.empty()||!send_game(peer,native_packet(spawn.container_creation,native_packet),"native-player-container")) {
+                                            pending_close.insert(peer);desynchronized.insert(peer);return false;
+                                        }
+                                        visible_containers[peer].insert(spawn.inventory_container_id);
+                                    }
                                     for(const auto* packet:std::array<const std::vector<std::uint8_t>*,3>{&spawn.player_before,&spawn.player_after,&character_update}) {
                                         if(!send_game(peer,native_packet(*packet,native_packet),"native-player-spawn")){pending_close.insert(peer);desynchronized.insert(peer);return false;}
                                     }
@@ -813,8 +829,14 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                     } catch(const std::exception& error) {result={false,error.what(),{}};}
                                 }
                             } else {
-                                auto processed=apply_replicated_command(*native_world,*native_assets,command,server_tick,*native_catalog);
+                                std::optional<std::uint32_t> player_container;
+                                if(native_players)if(const auto player=live_players.find(message->connection);player!=live_players.end())
+                                    player_container=player->second.inventory_container_id;
+                                const auto command_world=player_worlds.contains(message->connection)?player_worlds.at(message->connection):std::uint16_t(0);
+                                auto processed=apply_replicated_command(*native_world,*native_assets,command,server_tick,*native_catalog,command_world,player_container);
                                 result=processed.command;response=std::move(processed.response);world_mutated=result.applied;
+                                if(result.applied&&!result.changed_container_slots.empty())
+                                    for(const auto peer:game_started)if(player_worlds.contains(peer)&&player_worlds.at(peer)==command_world)recipients.insert(peer);
                             }
                             if(result.applied)++applied_commands;else ++rejected_commands;
                             if(world_mutated&&physics) {
@@ -906,7 +928,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
             player_worlds.erase(connection);
             active_player_locations.erase(connection);
             latest_client_ticks.erase(connection);
-            visible_players.erase(connection);for(auto& [peer,subjects]:visible_players){(void)peer;subjects.erase(connection);}
+            visible_players.erase(connection);visible_containers.erase(connection);for(auto& [peer,subjects]:visible_players){(void)peer;subjects.erase(connection);}
             net.close_connection(net.sockets,connection,1000,desynchronized.contains(connection)?"World update failed; reconnect to resynchronize":"scrapds probe complete",false);owned.connections.erase(connection);accepted.erase(connection);challenged.erase(connection);authenticated.erase(connection);gameinfo_sent.erase(connection);join_accepted.erase(connection);game_started.erase(connection);player_infos.erase(connection);
         }
         if(Clock::now()>=next_save){

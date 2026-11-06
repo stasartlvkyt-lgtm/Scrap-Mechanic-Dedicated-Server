@@ -60,8 +60,12 @@ PlayerSpawnPackets prepare_player_spawn(WorldState& world,net::ServerCharacters&
             result.player_id=spec.existing_player_id?*spec.existing_player_id:world.reserve_player_id();result.owner_steam_id=spec.steam_id;
             result.character_id=characters.spawn(spec.steam_id);spawned=true;
             result.player_state_words=spec.player_state_words;result.player_flags=spec.player_flags;result.info=spec.info;
+            result.inventory_container_id=world.ensure_player_inventory_container(spec.steam_id,spec.player_state_words[1]);
+            result.player_state_words[1]=result.inventory_container_id;
+            result.container_creation=net::make_net_object_packet({22,tick,{
+                net::make_container_creation(world.containers().at(result.inventory_container_id))}});
             net::PlayerSnapshot player;player.player_id=result.player_id;player.owner_steam_id=spec.steam_id;
-            player.state_words=spec.player_state_words;player.flags=spec.player_flags;player.info=spec.info;
+            player.state_words=result.player_state_words;player.flags=spec.player_flags;player.info=spec.info;
             result.player_before=net::make_blob_data_packet({13,tick,{net::make_player_blob_entry(player)}});
             player.character_id=result.character_id;
             result.player_after=net::make_blob_data_packet({13,tick,{net::make_player_blob_entry(player)}});
@@ -92,6 +96,22 @@ PlayerSpawnPackets restore_player_snapshot(std::uint64_t steam_id,const StoredPl
         packet.entries.front()=net::make_player_blob_entry(player);
         result.player_before=net::make_blob_data_packet(packet);result.info=player.info;
     }
+    return result;
+}
+PlayerSpawnPackets restore_player_snapshot(WorldState& world,std::uint64_t steam_id,
+                                           const StoredPlayerSnapshot& stored,std::uint32_t tick) {
+    auto result=restore_player_snapshot(steam_id,stored);
+    world.atomic([&] {
+        result.inventory_container_id=world.ensure_player_inventory_container(steam_id,result.player_state_words[1]);
+        result.player_state_words[1]=result.inventory_container_id;
+        net::PlayerSnapshot player;player.player_id=result.player_id;player.owner_steam_id=steam_id;
+        player.state_words=result.player_state_words;player.flags=result.player_flags;player.info=result.info;
+        result.player_before=net::make_blob_data_packet({13,tick,{net::make_player_blob_entry(player)}});
+        result.container_creation=net::make_net_object_packet({22,tick,{
+            net::make_container_creation(world.containers().at(result.inventory_container_id))}});
+        world.store_player_snapshot(steam_id,result.player_id,result.player_before,stored.inventory_verified);
+        return true;
+    });
     return result;
 }
 std::array<std::vector<std::uint8_t>,2> prepare_player_disconnect(const PlayerSpawnPackets& player,std::uint32_t tick) {

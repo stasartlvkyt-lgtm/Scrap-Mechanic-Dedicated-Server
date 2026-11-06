@@ -134,6 +134,12 @@ public:
     // PlayerManager uses provider index 10, stored in uniqueIds slot 8.
     // Returns the old value and atomically advances the saved counter.
     std::uint32_t reserve_player_id();
+    // Container uses provider index 6, stored in uniqueIds slot 4.
+    std::uint32_t reserve_container_id();
+    // Returns the persistent per-SteamID inventory Container, creating the
+    // native 30-slot default when no saved Player link is available.
+    std::uint32_t ensure_player_inventory_container(std::uint64_t steam_id,
+        std::uint32_t preferred_container_id = UINT32_MAX);
     // Server-owned extension table, included atomically in SQLite checkpoints.
     std::map<std::uint64_t,StoredPlayerSnapshot> player_snapshots() const;
     void store_player_snapshot(std::uint64_t steam_id,std::uint32_t player_id,const Blob& unlinked_packet);

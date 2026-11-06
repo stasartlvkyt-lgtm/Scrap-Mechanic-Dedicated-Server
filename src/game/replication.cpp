@@ -61,10 +61,15 @@ net::NetObjectPacket make_object_update(const WorldState& world, const CommandRe
         if(index==catalog.joints.end())throw std::runtime_error("replicated joint UUID has no asset catalog index");
         update.records.push_back(net::make_joint_state(blob,index->second));
     }
+    for(const auto& changed:result.changed_container_slots) {
+        const auto it=world.containers().find(changed.container_id);
+        if(it==world.containers().end())throw std::runtime_error("changed container is absent from world");
+        update.records.push_back(net::make_container_slot_state(it->second,changed.slot));
+    }
     return update;
 }
 ReplicatedCommandResult apply_replicated_command(WorldState& world,const AssetDefinitions& assets,
-    const net::GameCommand& command,std::uint32_t tick,const net::InitialAssetCatalog& catalog,std::uint16_t world_id) {
+    const net::GameCommand& command,std::uint32_t tick,const net::InitialAssetCatalog& catalog,std::uint16_t world_id,std::optional<std::uint32_t> player_container_id) {
     ReplicatedCommandResult result;
     world.atomic([&] {
         if(const auto* build=std::get_if<net::BuildShapeCommand>(&command)) {
@@ -72,7 +77,7 @@ ReplicatedCommandResult apply_replicated_command(WorldState& world,const AssetDe
             std::reverse_copy(build->shape_uuid.begin(),build->shape_uuid.end(),uuid.begin());
             if(!catalog.shapes.contains(uuid)) { result.command={false,"asset-not-in-bootstrap-client-catalog",{}}; return false; }
         }
-        result.command=apply_game_command(world,assets,command,world_id);
+        result.command=apply_game_command(world,assets,command,world_id,player_container_id);
         if(!result.command.applied)return false;
         auto packet=make_object_update(world,result.command,tick,catalog);
         if(!packet.records.empty())result.response=net::make_net_object_packet(packet);

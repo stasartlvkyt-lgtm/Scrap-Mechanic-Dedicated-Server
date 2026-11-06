@@ -21,12 +21,13 @@ struct PlayerSpawnSpec {
 };
 struct PlayerSpawnPackets {
     std::uint32_t player_id{},character_id{};
+    std::uint32_t inventory_container_id{UINT32_MAX};
     std::uint64_t owner_steam_id{};
     std::array<std::uint32_t,3> player_state_words{UINT32_MAX,UINT32_MAX,UINT32_MAX};
     std::uint8_t player_flags{0xff};
     net::PlayerInfo info;
     net::CharacterInitialState character_state;
-    std::vector<std::uint8_t> player_before,player_after,character_update;
+    std::vector<std::uint8_t> player_before,player_after,character_update,container_creation;
 };
 // Builds the observed Player-before, Player-linked and Character create/state
 // sequence. All packet bytes are prepared before the Player counter commits.
@@ -36,6 +37,8 @@ PlayerSpawnPackets prepare_player_spawn(WorldState& world,net::ServerCharacters&
 // remains available for later reconnects within the current listener session.
 std::array<std::vector<std::uint8_t>,2> prepare_player_disconnect(const PlayerSpawnPackets& player,std::uint32_t tick);
 PlayerSpawnPackets restore_player_snapshot(std::uint64_t steam_id,const StoredPlayerSnapshot& stored);
+PlayerSpawnPackets restore_player_snapshot(WorldState& world,std::uint64_t steam_id,
+                                           const StoredPlayerSnapshot& stored,std::uint32_t tick = 0);
 // Replace the Character's spawn position with its latest accepted client state
 // for a later-joining observer. This is not authoritative physics.
 std::vector<std::uint8_t> character_spawn_at_latest_position(const PlayerSpawnPackets& spawn,const net::CharacterUpdate& latest);

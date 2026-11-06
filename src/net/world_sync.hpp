@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace scrapds { class WorldState; }
+namespace scrapds { class WorldState; struct StoredContainer; }
 
 namespace scrapds::net {
 struct CharacterCreation;
@@ -58,6 +58,8 @@ NetObjectRecord make_child_shape_state(std::span<const std::uint8_t> saved_blob,
 NetObjectRecord make_joint_state(std::span<const std::uint8_t> saved_blob, std::uint16_t asset_index);
 NetObjectRecord make_character_creation(std::uint32_t id, const CharacterCreation& character);
 NetObjectRecord make_character_state(std::uint32_t id, const CharacterInitialState& character);
+NetObjectRecord make_container_creation(const scrapds::StoredContainer& container);
+NetObjectRecord make_container_slot_state(const scrapds::StoredContainer& container,std::uint32_t slot);
 struct NativeInitialWorld {
     NetObjectPacket packet;
     std::size_t native_body_creations{}, native_shape_states{}, native_joint_states{};

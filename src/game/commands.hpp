@@ -2,6 +2,7 @@
 #include "data/state.hpp"
 #include "data/assets.hpp"
 #include "net/game_commands.hpp"
+#include <optional>
 #include <string>
 #include <vector>
 namespace scrapds {
@@ -13,9 +14,12 @@ struct CommandResult {
     std::vector<std::uint32_t> removed_bodies, removed_shapes;
     std::vector<std::uint32_t> changed_joints;
     std::vector<std::uint32_t> removed_joints;
+    struct ContainerSlot { std::uint32_t container_id{},slot{}; };
+    std::vector<ContainerSlot> changed_container_slots;
 };
 // Bounded Creative block paint/build/remove, joint removal and paint.
 // Authentication is checked by transport. Survival inventory transactions
 // and character paint rules remain separate.
-CommandResult apply_game_command(WorldState& world, const AssetDefinitions& assets, const net::GameCommand& command, std::uint16_t world_id = 0);
+CommandResult apply_game_command(WorldState& world, const AssetDefinitions& assets, const net::GameCommand& command,
+    std::uint16_t world_id = 0,std::optional<std::uint32_t> player_container_id = std::nullopt);
 }

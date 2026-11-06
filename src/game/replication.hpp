@@ -15,5 +15,5 @@ struct ReplicatedCommandResult {
 // Commits the world only after every required client update has been encoded.
 ReplicatedCommandResult apply_replicated_command(WorldState& world, const AssetDefinitions& assets,
     const net::GameCommand& command, std::uint32_t tick, const net::InitialAssetCatalog& catalog,
-    std::uint16_t world_id = 0);
+    std::uint16_t world_id = 0, std::optional<std::uint32_t> player_container_id = std::nullopt);
 }
