@@ -903,8 +903,11 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                     const double dx=double(update.position[0])-baseline[0];
                                     const double dy=double(update.position[1])-baseline[1];
                                     const double dz=double(update.position[2])-baseline[2];
-                                    if(const auto violation=net::character_displacement_violation(baseline,update.position,elapsed_ticks*0.025);!violation.empty())throw std::runtime_error(violation);
-                                    if((character_collision||physics)&&player_worlds.contains(message->connection)) {
+                                    const auto violation=net::character_displacement_violation(baseline,update.position,elapsed_ticks*0.025);
+                                    if(!violation.empty()) {
+                                        update.position=baseline;corrected_position=baseline;
+                                        if(game_events.size()<10000)game_events.push_back("{\"kind\":\"character-motion-corrected\",\"reason\":"+json_quote(violation)+",\"elapsed_seconds\":"+elapsed(started)+'}');
+                                    } else if((character_collision||physics)&&player_worlds.contains(message->connection)) {
                                         const Vec3 start{baseline[0],baseline[1],baseline[2]};
                                         const auto world_id=player_worlds.at(message->connection);
                                         const Vec3 displacement{dx,dy,dz};
