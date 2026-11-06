@@ -834,4 +834,5 @@ diverged from the client. The revised cadence needs live-session confirmation.
 
 - Physics writeback updates all simulated bodies and RTree bounds in one SQLite transaction without copying the entire world. A per-world geometry version detects intervening body, shape and joint changes, and rolls back with an unsuccessful world transaction. This avoids repeated full-world comparisons each tick; performance on a live Survival server is not yet measured.
 - Player snapshot parsing consumes the appearance count before reading its entries, fixing a field offset that prevented previously saved players from being restored. The gameplay fixture now completes its spawn and restore path.
+- With `--native-physics`, accepted player displacement is swept and slid as a vertical capsule against the current Bullet scene, including simulated rigid bodies and resident terrain. The static collision snapshot remains the fallback when native physics is off. This corrects client positions but does not simulate a CharacterController, gravity, jumping, falling, damage or world transitions; live-client behavior is unverified.
 

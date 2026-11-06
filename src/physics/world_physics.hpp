@@ -28,6 +28,7 @@ struct WorldPhysicsBody {
     double qx{},qy{},qz{},qw{1};
 };
 struct WorldPhysicsBounds { Vec3 minimum,maximum; };
+struct WorldPhysicsCapsuleMotion { Vec3 position; std::uint32_t contacts{}; };
 
 // Experimental Bullet simulation of complete supported bodies, free bearings
 // and supported suspension groups. Material parameters are approximate;
@@ -46,6 +47,9 @@ public:
     // centre of mass. Forces act on the next step, impulses act immediately.
     void apply_impulse(std::uint32_t body_id,Vec3 impulse,Vec3 relative_position={});
     void apply_force(std::uint32_t body_id,Vec3 force,Vec3 relative_position={});
+    // Sweeps and slides a vertical capsule against the current simulated
+    // bodies and resident terrain in its world.
+    WorldPhysicsCapsuleMotion move_character_capsule(std::uint16_t world_id,Vec3 start,Vec3 displacement,double radius,double cylinder_height,double skin=0.001,unsigned max_iterations=4) const;
     // Explicitly supplied terrain geometry; tile-to-world mapping remains caller-owned.
     void add_terrain_mesh(std::uint16_t world_id,std::span<const TerrainVertex> triangle_vertices);
     void add_overworld_cell_mesh(std::uint16_t world_id,std::int32_t cell_x,std::int32_t cell_y,std::span<const TerrainVertex> triangle_vertices);

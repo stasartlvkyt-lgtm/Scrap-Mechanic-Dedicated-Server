@@ -58,6 +58,10 @@ void put_float(Blob& bytes,std::size_t offset,double value) {
     const auto word=std::bit_cast<std::uint32_t>(static_cast<float>(value));
     for(int i=0;i<4;++i)bytes.at(offset+i)=std::uint8_t(word>>(24-8*i));
 }
+bool finite(Vec3 v) {
+    const auto good=[](double x){return std::isfinite(x)&&std::abs(x)<=std::numeric_limits<btScalar>::max();};
+    return good(v.x)&&good(v.y)&&good(v.z);
+}
 }
 struct WorldPhysics::Impl {
     WorldPhysicsCoverage coverage;
@@ -304,6 +308,39 @@ void WorldPhysics::apply_force(std::uint32_t id,Vec3 force,Vec3 relative_positio
     const auto value=checked_vector(force),position=checked_vector(relative_position);const auto it=impl_->body_index.find(id);
     if(it==impl_->body_index.end()||!it->second->dynamic)throw std::invalid_argument("unknown-or-static-physics-body");
     it->second->rigid->activate(true);it->second->rigid->applyForce(value,position);
+}
+WorldPhysicsCapsuleMotion WorldPhysics::move_character_capsule(std::uint16_t world_id,Vec3 start,Vec3 displacement,double radius,double cylinder_height,double skin,unsigned max_iterations) const {
+    if(!finite(start)||!finite(displacement)||!std::isfinite(radius)||!std::isfinite(cylinder_height)||
+       !std::isfinite(skin)||radius<=0||cylinder_height<0||skin<0||max_iterations==0||max_iterations>16||
+       radius>std::numeric_limits<btScalar>::max()||cylinder_height>std::numeric_limits<btScalar>::max())
+        throw std::invalid_argument("invalid-character-capsule-motion");
+    const auto scene=impl_->scenes.find(world_id);
+    if(scene==impl_->scenes.end())return {{start.x+displacement.x,start.y+displacement.y,start.z+displacement.z},0};
+    const btScalar bullet_radius=btScalar(radius),bullet_height=btScalar(cylinder_height);
+    if(bullet_radius<=0||!std::isfinite(double(bullet_radius))||!std::isfinite(double(bullet_height)))
+        throw std::invalid_argument("invalid-character-capsule-dimensions");
+    btCapsuleShapeZ capsule(bullet_radius,bullet_height);Vec3 position=start,remaining=displacement;std::uint32_t contacts=0;
+    for(unsigned i=0;i<max_iterations;++i) {
+        const auto length=std::sqrt(remaining.x*remaining.x+remaining.y*remaining.y+remaining.z*remaining.z);
+        if(!std::isfinite(length))throw std::invalid_argument("character-capsule-motion-too-large");
+        if(length<1e-7)break;
+        btTransform from,to;from.setIdentity();to.setIdentity();from.setOrigin(checked_vector(position));
+        const Vec3 end{position.x+remaining.x,position.y+remaining.y,position.z+remaining.z};
+        to.setOrigin(checked_vector(end));
+        btCollisionWorld::ClosestConvexResultCallback callback(from.getOrigin(),to.getOrigin());
+        scene->second->world.convexSweepTest(&capsule,from,to,callback);
+        if(!callback.hasHit()){position=end;break;}
+        ++contacts;
+        const auto normal=callback.m_hitNormalWorld;
+        const auto fraction=std::clamp(double(callback.m_closestHitFraction),0.0,1.0);
+        const auto advance=std::max(0.0,fraction-skin/length);
+        position={position.x+remaining.x*advance,position.y+remaining.y*advance,position.z+remaining.z*advance};
+        remaining={remaining.x*(1-advance),remaining.y*(1-advance),remaining.z*(1-advance)};
+        const auto into=remaining.x*normal.x()+remaining.y*normal.y()+remaining.z*normal.z();
+        if(into>=-1e-9)break;
+        remaining={remaining.x-into*normal.x(),remaining.y-into*normal.y(),remaining.z-into*normal.z()};
+    }
+    return {position,contacts};
 }
 void WorldPhysics::add_saved_overworld_cell(std::uint16_t world_id,const OverworldTerrain& terrain,const std::map<std::array<std::uint8_t,16>,std::filesystem::path>& catalog,const OverworldCell& cell) {
     const auto vertices=mesh_saved_overworld_cell(terrain,catalog,cell);add_overworld_cell_mesh(world_id,cell.x,cell.y,vertices);

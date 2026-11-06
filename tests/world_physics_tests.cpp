@@ -56,6 +56,10 @@ int main(int argc,char** argv){try {
     const auto* rounded=assets.find("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");require(rounded&&rounded->hull_geometry&&rounded->hull_geometry->degenerate&&std::abs(rounded->hull_geometry->margin-0.0625)<1e-8,"rounded line hull did not load in grid units");
     auto world=scrapds::WorldState::load(path);auto physics=scrapds::WorldPhysics::from_world(world,1000.0,nullptr,&assets);
     require(physics.coverage().static_bodies==4&&physics.coverage().dynamic_bodies==1&&physics.coverage().box_parts==2&&physics.coverage().cylinder_parts==1&&physics.coverage().skipped_joint==1,"coverage classification");
+    const auto ground_motion=physics.move_character_capsule(0,{-2,-2,3},{0,0,-4},0.3,0.8);
+    require(ground_motion.contacts>0&&ground_motion.position.z>0.68&&ground_motion.position.z<0.73,"character capsule passed through saved static floor");
+    const auto body_motion=physics.move_character_capsule(0,{0.5,0.5,8},{0,0,-5},0.3,0.8);
+    require(body_motion.contacts>0&&body_motion.position.z>6.65&&body_motion.position.z<6.8,"character capsule passed through simulated body");
     const auto part_bounds=physics.bounds(4);require(part_bounds&&std::abs(part_bounds->minimum.x-10)<0.0001&&std::abs(part_bounds->maximum.x-10.25)<0.0001&&std::abs(part_bounds->maximum.z-1.0)<0.0001,"box-part bounds are wrong");
     const auto rotated_bounds=physics.bounds(5);require(rotated_bounds&&std::abs(rotated_bounds->minimum.x-19.75)<0.0001&&std::abs(rotated_bounds->maximum.x-20)<0.0001&&std::abs(rotated_bounds->maximum.y-1.0)<0.0001&&std::abs(rotated_bounds->minimum.z+0.25)<0.0001,"rotated box-part bounds are wrong");
     const auto cylinder_bounds=physics.bounds(6);require(cylinder_bounds&&std::abs(cylinder_bounds->minimum.x-30)<0.0001&&std::abs(cylinder_bounds->maximum.x-30.5)<0.0001&&std::abs(cylinder_bounds->maximum.y-1.0)<0.0001&&std::abs(cylinder_bounds->maximum.z-0.5)<0.0001,"cylinder-part bounds are wrong");
@@ -67,6 +71,8 @@ int main(int argc,char** argv){try {
     auto terrain_physics=scrapds::WorldPhysics::from_world(terrain_world);
     const std::vector<scrapds::TerrainVertex> terrain{{45,-5,0},{55,-5,0},{55,5,0},{45,-5,0},{55,5,0},{45,5,0}};
     terrain_physics.add_terrain_mesh(0,terrain);terrain_physics.step(400);
+    const auto terrain_player=terrain_physics.move_character_capsule(0,{54,0,3},{0,0,-4},0.3,0.8);
+    require(terrain_player.contacts>0&&terrain_player.position.z>0.68&&terrain_player.position.z<0.73,"character capsule passed through resident terrain");
     require(terrain_physics.coverage().terrain_triangles==2&&std::abs(terrain_physics.bodies().at(0).position.z)<0.05,"dynamic block did not settle on terrain mesh");
     require(std::abs(physics.bodies().at(0).position.z-5.0)<0.0001,"compound centre of mass shifted saved body origin");
     physics.step(0);physics.writeback(world);require(world.bodies().at(2).data==falling,"zero physics ticks changed a body");
