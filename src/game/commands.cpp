@@ -47,6 +47,7 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
         } catch(const std::runtime_error& error) {return {false,error.what(),{}};}
     }
     if(const auto* paint_joint=std::get_if<net::PaintJointCommand>(&command)) {
+        if(world.metadata().flags!=1)return {false,"joint-paint-requires-supported-creative-mode",{}};
         const auto joint=world.joints().find(paint_joint->joint_id);
         if(joint==world.joints().end())return {false,"unknown-joint",{}};
         if(joint->second.data.size()!=69||joint->second.data[0]!=2||joint->second.data[2]!=1||
@@ -89,6 +90,7 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
         if(mode==14) {
             if(!player_container_id)return {false,"player-inventory-unavailable",{}};
             if(build->inventory_slot<0)return {false,"invalid-inventory-slot",{}};
+            if(build->inventory_uuid!=build->shape_uuid)return {false,"inventory-item-does-not-match-built-block",{}};
             std::uint64_t volume=1;
             for(const auto dimension:build->block_dimensions) {
                 if(dimension<=0||dimension>256)return {false,"invalid-block-dimensions",{}};
@@ -111,6 +113,7 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
         } catch(const std::runtime_error& error) {return {false,error.what(),{}};}
     }
     if(const auto* remove=std::get_if<net::RemoveShapeCommand>(&command)) {
+        if(world.metadata().flags!=1)return {false,"shape-removal-requires-supported-creative-mode",{}};
         const auto& selection=remove->selection;
         if(selection.kind!=4)return {false,"unsupported-selection-kind",{}};
         if(!world.bodies().contains(selection.body_id))return {false,"unknown-body",{}};
@@ -170,6 +173,7 @@ static CommandResult apply_game_command_impl(WorldState& world,const AssetDefini
     }
     const auto* paint=std::get_if<net::PaintShapeCommand>(&command);
     if(!paint)return {false,"command-not-implemented",{}};
+    if(world.metadata().flags!=1)return {false,"shape-paint-requires-supported-creative-mode",{}};
     const auto& selection=paint->selection;
     if(selection.kind!=4)return {false,"unsupported-selection-kind",{}};
     if(!world.bodies().contains(selection.body_id))return {false,"unknown-body",{}};
