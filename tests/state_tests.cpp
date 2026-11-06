@@ -90,6 +90,24 @@ int main(int argc,char** argv) {
         require(sqlite3_prepare_v2(db,"SELECT length(data),hex(substr(data,1,16)) FROM ScriptData",-1,&stmt,nullptr)==SQLITE_OK,"opaque query failed");
         require(sqlite3_step(stmt)==SQLITE_ROW && sqlite3_column_int(stmt,0)==1048576,"opaque payload lost"); sqlite3_finalize(stmt);sqlite3_close(db);
         require(read(source) == original, "original save changed");
+        // A later SQLite error in a physics batch must roll back earlier body
+        // and RTree writes, including the in-memory cache.
+        const auto batch_source=temp.path/"batch.db";fixture(batch_source);
+        require(sqlite3_open(batch_source.string().c_str(),&db)==SQLITE_OK,"batch fixture open failed");
+        auto second=body();be32(second,3,8);
+        insert_blob(db,"INSERT INTO RigidBody VALUES(8,0,?1)",second);
+        sql(db,"INSERT INTO RigidBodyBounds VALUES(8,-3,3,-2,2); CREATE TRIGGER reject_second BEFORE UPDATE ON RigidBody WHEN NEW.id=8 BEGIN SELECT RAISE(ABORT,'injected failure'); END");sqlite3_close(db);
+        auto batch=scrapds::WorldState::load(batch_source);
+        auto first_update=body();number(first_update,17,12);
+        auto second_update=second;number(second_update,17,13);
+        rejects([&]{batch.replace_body_blobs({{7,first_update},{8,second_update}});},"failed body batch accepted");
+        require(batch.bodies().at(7).data==body()&&batch.bodies().at(8).data==second,"failed body batch changed cache");
+        const auto batch_saved=temp.path/"batch-saved.db";batch.save_as(batch_saved);
+        auto batch_restored=scrapds::WorldState::load(batch_saved);
+        require(batch_restored.bodies().at(7).data==body()&&batch_restored.bodies().at(8).data==second,"failed body batch changed saved bodies");
+        require(sqlite3_open(batch_saved.string().c_str(),&db)==SQLITE_OK,"batch saved open failed");
+        require(sqlite3_prepare_v2(db,"SELECT maxX FROM RigidBodyBounds WHERE id=7",-1,&stmt,nullptr)==SQLITE_OK,"batch bounds query failed");
+        require(sqlite3_step(stmt)==SQLITE_ROW&&sqlite3_column_double(stmt,0)==3,"failed body batch changed bounds");sqlite3_finalize(stmt);sqlite3_close(db);
         state.advance_ticks(5);
         state.save_checkpoint(dest);
         auto checkpoint= scrapds::WorldState::load(dest);

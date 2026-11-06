@@ -64,7 +64,7 @@ struct WorldPhysics::Impl {
     bool stepped{};
     std::map<std::uint16_t,std::unique_ptr<Scene>> scenes;
     std::map<std::uint32_t,Body*> body_index;
-    std::map<std::uint32_t,Blob> baseline_bodies,baseline_shapes,baseline_joints,baseline_controllers;
+    std::pair<std::uint64_t,std::uint64_t> world_version;
 };
 WorldPhysics::WorldPhysics(std::unique_ptr<Impl> impl):impl_(std::move(impl)){}
 WorldPhysics::WorldPhysics(WorldPhysics&&) noexcept=default;
@@ -74,10 +74,7 @@ WorldPhysics WorldPhysics::from_world(const WorldState& state,double density,con
     if(!std::isfinite(density)||density<=0||density>1e7)throw std::invalid_argument("invalid-block-density");
     auto impl=std::make_unique<Impl>();impl->coverage.source_bodies=state.bodies().size();
     if(const auto terrain=state.table_counts().find("VoxelTerrain");terrain!=state.table_counts().end())impl->coverage.terrain_chunks=terrain->second;
-    for(const auto& [id,body]:state.bodies())impl->baseline_bodies.emplace(id,body.data);
-    for(const auto& [id,shape]:state.shapes())impl->baseline_shapes.emplace(id,shape.data);
-    for(const auto& [id,joint]:state.joints())impl->baseline_joints.emplace(id,joint.data);
-    for(const auto& [id,controller]:state.controllers())impl->baseline_controllers.emplace(id,controller.data);
+    impl->world_version=state.physics_version();
     std::map<std::uint32_t,std::vector<const StoredShape*>> shapes;
     for(const auto& [id,shape]:state.shapes()){(void)id;shapes[shape.body_id].push_back(&shape);}
     std::set<std::uint32_t> joint_bodies;
@@ -351,13 +348,9 @@ std::optional<WorldPhysicsBounds> WorldPhysics::bounds(std::uint32_t id) const {
     return WorldPhysicsBounds{{low.x(),low.y(),low.z()},{high.x(),high.y(),high.z()}};
 }
 void WorldPhysics::writeback(WorldState& state) const {
-    if(state.bodies().size()!=impl_->baseline_bodies.size()||state.shapes().size()!=impl_->baseline_shapes.size()||state.joints().size()!=impl_->baseline_joints.size()||state.controllers().size()!=impl_->baseline_controllers.size())throw std::runtime_error("physics-world-changed-since-load");
-    for(const auto& [id,blob]:impl_->baseline_bodies){const auto it=state.bodies().find(id);if(it==state.bodies().end()||it->second.data!=blob)throw std::runtime_error("physics-world-changed-since-load");}
-    for(const auto& [id,blob]:impl_->baseline_shapes){const auto it=state.shapes().find(id);if(it==state.shapes().end()||it->second.data!=blob)throw std::runtime_error("physics-world-changed-since-load");}
-    for(const auto& [id,blob]:impl_->baseline_joints){const auto it=state.joints().find(id);if(it==state.joints().end()||it->second.data!=blob)throw std::runtime_error("physics-world-changed-since-load");}
-    for(const auto& [id,blob]:impl_->baseline_controllers){const auto it=state.controllers().find(id);if(it==state.controllers().end()||it->second.data!=blob)throw std::runtime_error("physics-world-changed-since-load");}
+    if(state.physics_version()!=impl_->world_version)throw std::runtime_error("physics-world-changed-since-load");
     if(!impl_->stepped)return;
-    state.atomic([&] {
+    std::map<std::uint32_t,Blob> updates;
         for(const auto& [world,scene]:impl_->scenes)for(const auto& body:scene->bodies)if(body->dynamic) {
             const auto found=state.bodies().find(body->id);
             if(found==state.bodies().end()||found->second.world_id!=world||found->second.data.size()!=80||found->second.data[1]!=2)
@@ -367,11 +360,10 @@ void WorldPhysics::writeback(WorldState& state) const {
             put_float(bytes,9,high.y());put_float(bytes,13,low.y());put_float(bytes,17,high.x());put_float(bytes,21,low.x());
             for(int i=0;i<4;++i)put_float(bytes,27+4*i,q[i]);
             for(int i=0;i<3;++i){put_float(bytes,43+4*i,p[i]);put_float(bytes,55+4*i,v[i]);put_float(bytes,67+4*i,a[i]);}
-            state.replace_body_blob(body->id,std::move(bytes));
+            updates.emplace(body->id,std::move(bytes));
         }
-        return true;
-    });
-    for(auto& [id,blob]:impl_->baseline_bodies)blob=state.bodies().at(id).data;
+    state.replace_body_blobs(std::move(updates));
+    impl_->world_version=state.physics_version();
     impl_->stepped=false;
 }
 std::string WorldPhysics::summary_json() const {

@@ -70,6 +70,13 @@ int main(int argc,char** argv){try {
     require(terrain_physics.coverage().terrain_triangles==2&&std::abs(terrain_physics.bodies().at(0).position.z)<0.05,"dynamic block did not settle on terrain mesh");
     require(std::abs(physics.bodies().at(0).position.z-5.0)<0.0001,"compound centre of mass shifted saved body origin");
     physics.step(0);physics.writeback(world);require(world.bodies().at(2).data==falling,"zero physics ticks changed a body");
+    auto foreign_world=scrapds::WorldState::load(path);
+    bool foreign_rejected=false;try{physics.writeback(foreign_world);}catch(const std::runtime_error&){foreign_rejected=true;}
+    require(foreign_rejected,"physics accepted a different world instance");
+    const auto version=world.physics_version();
+    require(!world.atomic([&]{world.replace_body_blob(2,falling);return false;}),"rollback fixture unexpectedly committed");
+    require(world.physics_version()==version,"rollback changed physics version");
+    physics.writeback(world);
     const std::set<std::uint32_t> unmapped;
     auto filtered=scrapds::WorldPhysics::from_world(world,1000.0,&unmapped,&assets);
     require(filtered.coverage().dynamic_bodies==0&&filtered.coverage().skipped_unmapped==1&&filtered.coverage().static_bodies==4,"network-unmapped dynamic body was simulated");

@@ -10,6 +10,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace scrapds {
@@ -96,6 +97,8 @@ public:
     WorldState& operator=(const WorldState&) = delete;
 
     const GameMetadata& metadata() const;
+    // Identifies this world instance and its current physics-relevant state.
+    std::pair<std::uint64_t,std::uint64_t> physics_version() const;
     const std::map<std::uint32_t, StoredBody>& bodies() const;
     const std::map<std::uint32_t, StoredShape>& shapes() const;
     const std::map<std::uint32_t, StoredJoint>& joints() const;
@@ -151,6 +154,8 @@ public:
     // Replaces known records only, retaining identity and ownership. Invalid
     // prefixes and orphan references are rejected before any mutation.
     void replace_body_blob(std::uint32_t id, Blob data);
+    // Applies a batch of body poses and their RTree bounds in one transaction.
+    void replace_body_blobs(std::map<std::uint32_t, Blob> data);
     void replace_shape_blob(std::uint32_t id, Blob data);
     void replace_shape_blobs(std::map<std::uint32_t, Blob> data);
     // Joint BLOB identity/shape references are retained when applying state edits.

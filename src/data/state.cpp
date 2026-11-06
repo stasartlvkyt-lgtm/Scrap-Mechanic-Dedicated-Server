@@ -4,6 +4,7 @@
 #include "net/world_sync.hpp"
 #include <lz4.h>
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cmath>
 #include <sqlite3.h>
@@ -164,6 +165,9 @@ struct TemporaryDirectory {
 }
 
 struct WorldState::Impl {
+    inline static std::atomic<std::uint64_t> next_identity{1};
+    const std::uint64_t physics_identity=next_identity.fetch_add(1,std::memory_order_relaxed);
+    std::uint64_t physics_revision{};
     Db db{nullptr, sqlite3_close};
     std::filesystem::path source;
     GameMetadata metadata;
@@ -183,8 +187,8 @@ WorldState::~WorldState() = default;
 bool WorldState::atomic(const std::function<bool()>& operation) {
     auto bodies=impl_->bodies; auto shapes=impl_->shapes; auto joints=impl_->joints;
     auto controllers=impl_->controllers; auto container_records=impl_->container_records; auto container_ids=impl_->container_ids;
-    auto counts=impl_->counts; auto metadata=impl_->metadata;
-    auto restore=[&] { impl_->bodies.swap(bodies); impl_->shapes.swap(shapes); impl_->joints.swap(joints); impl_->controllers.swap(controllers); impl_->container_records.swap(container_records); impl_->container_ids.swap(container_ids); impl_->counts.swap(counts); std::swap(impl_->metadata,metadata); };
+    auto counts=impl_->counts; auto metadata=impl_->metadata; const auto revision=impl_->physics_revision;
+    auto restore=[&] { impl_->bodies.swap(bodies); impl_->shapes.swap(shapes); impl_->joints.swap(joints); impl_->controllers.swap(controllers); impl_->container_records.swap(container_records); impl_->container_ids.swap(container_ids); impl_->counts.swap(counts); std::swap(impl_->metadata,metadata); impl_->physics_revision=revision; };
     try {
         bool accepted;
         { Transaction transaction(impl_->db.get()); accepted=operation(); if(accepted) transaction.commit(); }
@@ -475,6 +479,7 @@ WorldState WorldState::load(const std::filesystem::path& source) {
     return WorldState(std::move(impl));
 }
 const GameMetadata& WorldState::metadata() const { return impl_->metadata; }
+std::pair<std::uint64_t,std::uint64_t> WorldState::physics_version() const { return {impl_->physics_identity,impl_->physics_revision}; }
 const std::map<std::uint32_t, StoredBody>& WorldState::bodies() const { return impl_->bodies; }
 const std::map<std::uint32_t, StoredShape>& WorldState::shapes() const { return impl_->shapes; }
 const std::map<std::uint32_t, StoredJoint>& WorldState::joints() const { return impl_->joints; }
@@ -625,24 +630,38 @@ void WorldState::advance_ticks(std::uint64_t count) {
     impl_->metadata.tick = tick;
 }
 void WorldState::replace_body_blob(std::uint32_t body_id, Blob data) {
-    const auto old = impl_->bodies.find(body_id);
-    if (old == impl_->bodies.end()) throw std::runtime_error("Cannot replace unknown body");
-    const auto decoded = decode_rigid_body_prefix(data, data.size());
-    if (decoded.id != body_id || decoded.world_id != old->second.world_id) throw std::runtime_error("Cannot change body identity or world in BLOB replacement");
+    std::map<std::uint32_t,Blob> changes;
+    changes.emplace(body_id,std::move(data));
+    replace_body_blobs(std::move(changes));
+}
+void WorldState::replace_body_blobs(std::map<std::uint32_t,Blob> data) {
+    if(data.empty())return;
+    std::map<std::uint32_t,RigidBodyPrefix> decoded;
+    for(const auto& [body_id,bytes]:data) {
+        const auto old=impl_->bodies.find(body_id);
+        if(old==impl_->bodies.end())throw std::runtime_error("Cannot replace unknown body");
+        const auto prefix=decode_rigid_body_prefix(bytes,bytes.size());
+        if(prefix.id!=body_id||prefix.world_id!=old->second.world_id)throw std::runtime_error("Cannot change body identity or world in BLOB replacement");
+        decoded.emplace(body_id,prefix);
+    }
     Transaction transaction(impl_->db.get());
     auto s = prepare(impl_->db.get(), "UPDATE RigidBody SET data=?1 WHERE id=?2");
-    sqlite3_bind_blob64(s.get(), 1, data.data(), data.size(), SQLITE_TRANSIENT);
-    sqlite3_bind_int64(s.get(), 2, body_id);
-    if (step(impl_->db.get(), s.get()) != SQLITE_DONE || sqlite3_changes(impl_->db.get()) != 1) throw std::runtime_error("Cannot replace body BLOB");
-    if (impl_->counts.contains("RigidBodyBounds")) {
-        auto bounds = prepare(impl_->db.get(), "UPDATE RigidBodyBounds SET minX=?1,maxX=?2,minY=?3,maxY=?4 WHERE id=?5");
-        for (int i = 0; i < 4; ++i) sqlite3_bind_double(bounds.get(), i + 1, decoded.bounds_min_x_max_x_min_y_max_y[i]);
-        sqlite3_bind_int64(bounds.get(), 5, body_id);
-        if (step(impl_->db.get(), bounds.get()) != SQLITE_DONE || sqlite3_changes(impl_->db.get()) != 1) throw std::runtime_error("Cannot update body RTree bounds");
+    auto bounds=impl_->counts.contains("RigidBodyBounds")?prepare(impl_->db.get(), "UPDATE RigidBodyBounds SET minX=?1,maxX=?2,minY=?3,maxY=?4 WHERE id=?5"):Stmt(nullptr,sqlite3_finalize);
+    for(const auto& [body_id,bytes]:data) {
+        sqlite3_reset(s.get());sqlite3_clear_bindings(s.get());
+        sqlite3_bind_blob64(s.get(),1,bytes.data(),bytes.size(),SQLITE_TRANSIENT);
+        sqlite3_bind_int64(s.get(),2,body_id);
+        if(step(impl_->db.get(),s.get())!=SQLITE_DONE||sqlite3_changes(impl_->db.get())!=1)throw std::runtime_error("Cannot replace body BLOB");
+        if(bounds) {
+            sqlite3_reset(bounds.get());sqlite3_clear_bindings(bounds.get());
+            for(int i=0;i<4;++i)sqlite3_bind_double(bounds.get(),i+1,decoded.at(body_id).bounds_min_x_max_x_min_y_max_y[i]);
+            sqlite3_bind_int64(bounds.get(),5,body_id);
+            if(step(impl_->db.get(),bounds.get())!=SQLITE_DONE||sqlite3_changes(impl_->db.get())!=1)throw std::runtime_error("Cannot update body RTree bounds");
+        }
     }
     transaction.commit();
-    old->second.data = std::move(data);
-    old->second.prefix = decoded;
+    for(auto& [body_id,bytes]:data) {auto& body=impl_->bodies.at(body_id);body.data=std::move(bytes);body.prefix=decoded.at(body_id);}
+    ++impl_->physics_revision;
 }
 void WorldState::replace_shape_blob(std::uint32_t shape_id, Blob data) {
     std::map<std::uint32_t,Blob> mutation;
@@ -669,6 +688,7 @@ void WorldState::replace_shape_blobs(std::map<std::uint32_t, Blob> data) {
     }
     transaction.commit();
     for(auto& [id,bytes]:data) { auto& shape=impl_->shapes.at(id);shape.data=std::move(bytes);shape.prefix=std::move(decoded.at(id)); }
+    ++impl_->physics_revision;
 }
 void WorldState::replace_joint_blob(std::uint32_t joint_id, Blob data) {
     const auto old=impl_->joints.find(joint_id);
@@ -686,6 +706,7 @@ void WorldState::replace_joint_blob(std::uint32_t joint_id, Blob data) {
     if(step(impl_->db.get(),s.get())!=SQLITE_DONE||sqlite3_changes(impl_->db.get())!=1)throw std::runtime_error("Cannot replace joint BLOB");
     transaction.commit();
     old->second.data=std::move(data);
+    ++impl_->physics_revision;
 }
 void WorldState::replace_container_blob(std::uint32_t container_id,Blob data) {
     const auto old=impl_->container_records.find(container_id);
@@ -847,6 +868,7 @@ CreatedBlock WorldState::create_block(const BlockCreation& request) {
     transaction.commit();
     if(existing) {auto& body=impl_->bodies.at(body_id);body.data=std::move(body_data);body.prefix=body_prefix;}
     impl_->bodies.merge(added_bodies);impl_->shapes.merge(added_shapes);impl_->counts.swap(counts);
+    ++impl_->physics_revision;
     return {body_id,shape_id,!existing};
 }
 RemovedShapes WorldState::remove_shapes(const std::vector<std::uint32_t>& ids) {
@@ -907,6 +929,7 @@ RemovedShapes WorldState::remove_shapes(const std::vector<std::uint32_t>& ids) {
     for(const auto shape_id:result.shape_ids)impl_->shapes.erase(shape_id);
     for(const auto body_id:result.empty_body_ids)impl_->bodies.erase(body_id);
     impl_->counts.swap(counts);
+    ++impl_->physics_revision;
     return result;
 }
 void WorldState::remove_joint(std::uint32_t id) {
@@ -922,6 +945,7 @@ void WorldState::remove_joint(std::uint32_t id) {
     transaction.commit();
     impl_->joints.erase(found);
     impl_->counts.swap(counts);
+    ++impl_->physics_revision;
 }
 SplitShape WorldState::split_block_shape(std::uint32_t id,
     const std::array<std::int32_t,3>& selected_position,
@@ -998,6 +1022,7 @@ SplitShape WorldState::split_block_shape(std::uint32_t id,
     transaction.commit();
     const auto selected_prefix=decode_child_shape_prefix(updated,updated.size());auto& selected=impl_->shapes.at(id);selected.data=std::move(updated);selected.prefix=selected_prefix;
     impl_->shapes.merge(added);impl_->counts.swap(counts);
+    ++impl_->physics_revision;
     return result;
 }
 void WorldState::save_as(const std::filesystem::path& output) const {
