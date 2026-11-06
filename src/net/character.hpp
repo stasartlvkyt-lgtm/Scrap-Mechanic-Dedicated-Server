@@ -103,9 +103,14 @@ public:
     void despawn(std::uint64_t steam_id) noexcept;
     std::string observe(std::uint64_t steam_id, const CharacterUpdate& update);
     std::optional<CharacterUpdate> latest(std::uint64_t steam_id) const;
+    std::optional<std::array<float,3>> tick_start_position(std::uint64_t steam_id) const;
     std::size_t size() const noexcept { return characters_.size(); }
 private:
-    struct Character { std::uint32_t id; std::optional<CharacterUpdate> state; };
+    struct Character {
+        std::uint32_t id;
+        std::optional<CharacterUpdate> state;
+        std::array<float,3> tick_start_position{};
+    };
     std::uint32_t next_id_{1};
     std::map<std::uint64_t,Character> characters_;
 };

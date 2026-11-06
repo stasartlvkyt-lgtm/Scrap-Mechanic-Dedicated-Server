@@ -345,7 +345,7 @@ std::uint32_t ServerCharacters::spawn(std::uint64_t steam_id) {
     if(characters_.contains(steam_id))throw std::runtime_error("character-owner-already-spawned");
     if(next_id_==UINT32_MAX)throw std::runtime_error("character-id-exhausted");
     const auto id=next_id_;
-    characters_.emplace(steam_id,Character{id});
+    characters_.emplace(steam_id,Character{id,std::nullopt,{}});
     ++next_id_;
     return id;
 }
@@ -356,12 +356,23 @@ std::string ServerCharacters::observe(std::uint64_t steam_id,const CharacterUpda
     if(it==characters_.end())return "character-not-spawned";
     auto& character=it->second;
     if(character.id!=update.character_id)return "character-not-owned-by-peer";
-    if(character.state&&std::bit_cast<std::int32_t>(update.tick-character.state->tick)<0)return "stale-character-tick";
+    if(character.state) {
+        const auto tick_delta=std::bit_cast<std::int32_t>(update.tick-character.state->tick);
+        if(tick_delta<0)return "stale-character-tick";
+        if(tick_delta>0)character.tick_start_position=update.position;
+    } else {
+        character.tick_start_position=update.position;
+    }
     character.state=update;return {};
 }
 std::optional<CharacterUpdate> ServerCharacters::latest(std::uint64_t steam_id) const {
     const auto it=characters_.find(steam_id);
     return it==characters_.end()?std::nullopt:it->second.state;
+}
+std::optional<std::array<float,3>> ServerCharacters::tick_start_position(std::uint64_t steam_id) const {
+    const auto it=characters_.find(steam_id);
+    if(it==characters_.end()||!it->second.state)return std::nullopt;
+    return it->second.tick_start_position;
 }
 
 } // namespace scrapds::net

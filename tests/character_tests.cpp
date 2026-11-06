@@ -294,6 +294,18 @@ int main() {
         if(server_characters.observe(steam_b,owned)!="character-not-owned-by-peer"||!server_characters.observe(steam_a,owned).empty())throw std::runtime_error("server character owner check failed");
         auto old=owned;old.tick--;
         if(server_characters.observe(steam_a,old)!="stale-character-tick")throw std::runtime_error("server accepted stale character state");
+        auto tick_start=server_characters.tick_start_position(steam_a);
+        if(!tick_start||*tick_start!=owned.position)throw std::runtime_error("server did not retain the character tick start position");
+        auto same_tick=owned;same_tick.position[0]+=0.2f;
+        if(!server_characters.observe(steam_a,same_tick).empty())throw std::runtime_error("server rejected a same-tick character sample");
+        tick_start=server_characters.tick_start_position(steam_a);
+        if(!tick_start||*tick_start!=owned.position)throw std::runtime_error("same-tick sample moved the anti-drift baseline");
+        auto drifted=same_tick;drifted.position[0]+=0.2f;
+        if(scrapds::net::character_displacement_violation(*tick_start,drifted.position,0.0)!="character-horizontal-speed-limit")throw std::runtime_error("repeated same-tick samples accumulated movement tolerance");
+        auto next_tick=same_tick;++next_tick.tick;
+        if(!server_characters.observe(steam_a,next_tick).empty())throw std::runtime_error("server rejected the next character tick");
+        tick_start=server_characters.tick_start_position(steam_a);
+        if(!tick_start||*tick_start!=next_tick.position)throw std::runtime_error("new character tick did not advance the movement baseline");
         server_characters.despawn(steam_a);
         if(server_characters.observe(steam_a,owned)!="character-not-spawned"||server_characters.spawn(steam_a)!=3)throw std::runtime_error("despawn reused a character ID");
         bool duplicate_spawn=false;try {server_characters.spawn(steam_a);}catch(const std::runtime_error&){duplicate_spawn=true;}

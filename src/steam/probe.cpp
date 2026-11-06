@@ -894,7 +894,13 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                 if(const auto previous=server_characters.latest(message->peer.steam_id())) {
                                     const auto tick_delta=std::bit_cast<std::int32_t>(update.tick-previous->tick);
                                     if(tick_delta<0)throw std::runtime_error("stale-character-tick");
-                                    elapsed_ticks=std::clamp(double(tick_delta),0.0,40.0);baseline=previous->position;have_baseline=true;
+                                    elapsed_ticks=std::clamp(double(tick_delta),0.0,40.0);
+                                    if(tick_delta==0) {
+                                        const auto tick_start=server_characters.tick_start_position(message->peer.steam_id());
+                                        if(!tick_start)throw std::runtime_error("missing-character-tick-baseline");
+                                        baseline=*tick_start;
+                                    } else baseline=previous->position;
+                                    have_baseline=true;
                                 } else if(const auto spawn=live_players.find(message->connection);spawn!=live_players.end()) {
                                     const auto server_age=std::bit_cast<std::int32_t>(server_tick-spawn->second.spawn_server_tick);
                                     elapsed_ticks=std::clamp(double(server_age),0.0,40.0);baseline=spawn->second.spawn_position;have_baseline=true;
