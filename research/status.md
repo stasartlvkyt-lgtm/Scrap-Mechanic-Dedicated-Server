@@ -875,3 +875,9 @@ diverged from the client. The revised cadence needs live-session confirmation.
 - Loading vanilla CharacterSets exposed a static cinematic entity whose nominal capsule is 10×10. Asset parsing now retains the profile; native-player physics only applies capsule geometry when height is at least the diameter, otherwise it keeps the safe default. Numeric range validation remains in place.
 - Synthetic gameplay fixture and installed asset catalog check pass; all 20 CTest pass. This catalog does not resolve per-object Lua storage, loot selection, player-to-target distance, Harvestable create/state replication, or Survival bootstrap. Command `0x28` remains rejected and no object is consumed.
 
+
+## Harvestable save UUID mapping (2026-11-07)
+
+- Confirmed 72-byte Harvestable records now expose the reversed saved 16-byte asset UUID only after SQLite/header identity validation; unknown or mismatched records remain opaque.
+- Fixture verifies the WoodHarvestable bytes. Read-only audit of the installed Survival save matched 124,402 decoded Harvestable UUIDs against 208 installed definitions with zero unmatched values; 49 records did not pass identity decoding and are excluded. CTest: 20/20.
+- Type-5 create/state serialization, per-object ScriptData/storage, initial Survival bootstrap and harvesting gameplay remain outstanding.

@@ -65,6 +65,10 @@ struct StoredHarvestable {
     std::int32_t x{}, y{};
     std::uint8_t size{};
     Blob data;
+    // Asset UUID bytes as stored in the game's reversed 16-byte UUID layout.
+    // Available only when the containing 72-byte Harvestable identity matches
+    // the SQLite row, so callers can safely map it to the installed asset set.
+    std::optional<std::array<std::uint8_t,16>> saved_asset_uuid;
     // The recognized header/row identity fields are cross-checked. Remaining
     // transform/runtime fields stay opaque and are preserved verbatim.
     bool identity_verified{};

@@ -1,4 +1,5 @@
 #include "data/state.hpp"
+#include "data/assets.hpp"
 #include "data/shape_geometry.hpp"
 #include "data/terrain.hpp"
 #include "net/world_sync.hpp"
@@ -12,6 +13,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 void require(bool ok, const char* message) { if (!ok) throw std::runtime_error(message); }
@@ -34,7 +36,20 @@ scrapds::Blob harvestable() {
     scrapds::Blob b(72);b[0]=5;b[1]=0;b[2]=1;be32(b,3,13);b[7]=3;
     be32(b,8,std::bit_cast<std::uint32_t>(std::int32_t(-40)));
     be32(b,12,std::bit_cast<std::uint32_t>(std::int32_t(-38)));b[17]=1;b[19]=1;
+    constexpr std::array<std::uint8_t,16> saved_uuid{0x60,0xd3,0x50,0xe3,0xe8,0x7a,0x67,0xad,0x93,0x4b,0xdb,0x63,0xba,0xca,0x11,0x84};
+    std::copy(saved_uuid.begin(),saved_uuid.end(),b.begin()+20);
     return b;
+}
+std::array<std::uint8_t,16> saved_uuid_from_text(std::string_view text) {
+    std::array<std::uint8_t,16> bytes{};std::size_t n=0;
+    auto hex=[](char c)->std::uint8_t {if(c>='0'&&c<='9')return std::uint8_t(c-'0');if(c>='a'&&c<='f')return std::uint8_t(c-'a'+10);if(c>='A'&&c<='F')return std::uint8_t(c-'A'+10);throw std::runtime_error("invalid UUID hex digit");};
+    for(std::size_t i=0;i<text.size();) {
+        if(text[i]=='-'){++i;continue;}
+        if(i+1>=text.size()||n>=bytes.size())throw std::runtime_error("invalid UUID width");
+        bytes[n++]=std::uint8_t((hex(text[i])<<4)|hex(text[i+1]));i+=2;
+    }
+    if(n!=bytes.size())throw std::runtime_error("invalid UUID width");
+    std::reverse(bytes.begin(),bytes.end());return bytes;
 }
 void insert_blob(sqlite3* db, const char* query, const scrapds::Blob& b) {
     sqlite3_stmt* stmt = nullptr;
@@ -72,6 +87,8 @@ int main(int argc,char** argv) {
         require(state.metadata().tick == 100 && state.bodies().size() == 1 && state.shapes().size() == 1, "load lost metadata or entities");
         require(state.bodies().at(7).prefix.has_value(), "known body prefix not decoded");
         require(state.harvestables().size()==1&&state.harvestables().at(13).identity_verified&&state.harvestables().at(13).x==-38&&state.harvestables().at(13).y==-40,"saved Harvestable identity not decoded");
+        constexpr std::array<std::uint8_t,16> expected_harvestable_uuid{0x60,0xd3,0x50,0xe3,0xe8,0x7a,0x67,0xad,0x93,0x4b,0xdb,0x63,0xba,0xca,0x11,0x84};
+        require(state.harvestables().at(13).saved_asset_uuid==expected_harvestable_uuid,"saved Harvestable asset UUID not decoded in native byte order");
         require(state.joints().at(3).shape_b == UINT32_MAX, "world-anchor joint sentinel lost");
         require(state.table_counts().at("ScriptData") == 2, "unknown tables not retained");
         require(state.terrain_generator_data(1)==scrapds::Blob({'L','U','A',0,0,0,1,5})&&!state.terrain_generator_data(2),"terrain generator state extraction failed");
@@ -176,7 +193,8 @@ int main(int argc,char** argv) {
         const auto other_pose=scrapds::decode_rigid_body_pose(negative.bodies().at(other_world.body_id).data);
         require(other_pose->world_id==1&&other_pose->repeated_world_id==1&&negative.bodies().at(other_world.body_id).data.at(55)==0,"repeated world ID was confused with flags");
         if(argc>=2){auto actual=scrapds::WorldState::load(argv[1]);const auto terrain=actual.terrain_generator_data(1);require(terrain&&terrain->size()>1000,"real survival terrain generator state missing");const auto cells=scrapds::decode_overworld_cells(*terrain);require(cells.size()==16128,"real survival tile grid mismatch");std::cout<<"survival terrain state: "<<terrain->size()<<" bytes, "<<cells.size()<<" cells\n";
-            if(argc>=3){const auto catalog=scrapds::index_game_terrain_tiles(argv[2]);std::size_t matched=0;for(const auto& cell:cells)if(catalog.contains(cell.tile_uuid))++matched;require(matched>10000,"real survival tile UUID mapping mismatch");const auto& cell=cells.front();(void)scrapds::read_overworld_tile_voxels(cell,catalog);const auto heights=scrapds::read_terrain_tile_heights(catalog.at(cell.tile_uuid),cell.tile_x,cell.tile_y);require(heights.side==33&&heights.samples.size()==1089,"real survival tile heights missing");
+            if(argc>=3){const auto assets=scrapds::AssetDefinitions::load(std::filesystem::u8path(argv[2]));std::set<std::array<std::uint8_t,16>> installed_harvestables;for(const auto& [uuid,definition]:assets.harvestables()){(void)definition;installed_harvestables.insert(saved_uuid_from_text(uuid));}std::size_t decoded_harvestables=0,unmatched_harvestables=0;for(const auto& [id,item]:actual.harvestables()){(void)id;if(!item.saved_asset_uuid)continue;++decoded_harvestables;if(!installed_harvestables.contains(*item.saved_asset_uuid))++unmatched_harvestables;}require(decoded_harvestables>100000&&unmatched_harvestables==0,"real Survival Harvestable UUID mapping mismatch");std::cout<<"matched "<<decoded_harvestables<<" saved Harvestable UUIDs against "<<installed_harvestables.size()<<" installed assets\n";
+                const auto catalog=scrapds::index_game_terrain_tiles(argv[2]);std::size_t matched=0;for(const auto& cell:cells)if(catalog.contains(cell.tile_uuid))++matched;require(matched>10000,"real survival tile UUID mapping mismatch");const auto& cell=cells.front();(void)scrapds::read_overworld_tile_voxels(cell,catalog);const auto heights=scrapds::read_terrain_tile_heights(catalog.at(cell.tile_uuid),cell.tile_x,cell.tile_y);require(heights.side==33&&heights.samples.size()==1089,"real survival tile heights missing");
                 const auto generated=scrapds::decode_overworld_terrain(*terrain);const auto spawn=std::find_if(generated.cells.begin(),generated.cells.end(),[](const auto& c){return c.x==0&&c.y==0;});require(spawn!=generated.cells.end(),"survival origin cell missing");const auto surface=scrapds::mesh_saved_overworld_cell(generated,catalog,*spawn);require(surface.size()==6144,"survival generated surface missing");
                 const auto adjacent=std::find_if(generated.cells.begin(),generated.cells.end(),[](const auto& c){return c.x==1&&c.y==0;});require(adjacent!=generated.cells.end(),"survival adjacent cell missing");const auto other=scrapds::mesh_saved_overworld_cell(generated,catalog,*adjacent);
                 std::map<int,float> border_a,border_b;for(const auto& p:surface)if(p.x==64)border_a[int(p.y)]=p.z;for(const auto& p:other)if(p.x==64)border_b[int(p.y)]=p.z;

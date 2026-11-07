@@ -483,7 +483,7 @@ WorldState WorldState::load(const std::filesystem::path& source) {
             const auto size=id(s.get(),4);
             if(size>UINT8_MAX)throw std::runtime_error("Harvestable size outside uint8 range");
             StoredHarvestable item{id(s.get(),0),static_cast<std::uint16_t>(world),
-                signed32(s.get(),2,"x"),signed32(s.get(),3,"y"),static_cast<std::uint8_t>(size),blob(s.get(),5),false};
+                signed32(s.get(),2,"x"),signed32(s.get(),3,"y"),static_cast<std::uint8_t>(size),blob(s.get(),5),std::nullopt,false};
             const auto& bytes=item.data;
             if(bytes.size()==72&&bytes[0]==5&&bytes[1]==0&&bytes[2]==1) {
                 const auto read32=[&](std::size_t at){return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|(std::uint32_t(bytes[at+2])<<8)|bytes[at+3];};
@@ -491,6 +491,11 @@ WorldState WorldState::load(const std::filesystem::path& source) {
                 const auto saved_x=std::bit_cast<std::int32_t>(read32(12));
                 const auto saved_y=std::bit_cast<std::int32_t>(read32(8));
                 item.identity_verified=read32(3)==item.id&&bytes[7]==item.size&&saved_y==item.y&&saved_x==item.x&&saved_world==item.world_id;
+                if(item.identity_verified) {
+                    std::array<std::uint8_t,16> uuid{};
+                    std::copy_n(bytes.begin()+20,uuid.size(),uuid.begin());
+                    item.saved_asset_uuid=uuid;
+                }
             }
             if(!impl->harvestable_records.emplace(item.id,std::move(item)).second)throw std::runtime_error("Duplicate Harvestable ID");
         }

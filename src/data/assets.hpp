@@ -51,6 +51,7 @@ public:
     const HarvestableAssetDefinition* find_harvestable(const std::string& uuid) const;
     std::size_t size() const { return entries_.size(); }
     std::size_t harvestable_size() const { return harvestables_.size(); }
+    const std::map<std::string,HarvestableAssetDefinition>& harvestables() const { return harvestables_; }
 private:
     std::map<std::string, AssetDefinition> entries_;
     std::map<std::string, CharacterAssetDefinition> characters_;
