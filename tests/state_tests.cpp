@@ -30,6 +30,12 @@ scrapds::Blob body() {
     return bytes;
 }
 scrapds::Blob shape() { scrapds::Blob b(48); b[0]=1; b[1]=31; b[2]=1; be32(b,3,11); be32(b,7,7); be32(b,27,7); return b; }
+scrapds::Blob harvestable() {
+    scrapds::Blob b(72);b[0]=5;b[1]=0;b[2]=1;be32(b,3,13);b[7]=3;
+    be32(b,8,std::bit_cast<std::uint32_t>(std::int32_t(-40)));
+    be32(b,12,std::bit_cast<std::uint32_t>(std::int32_t(-38)));b[17]=1;b[19]=1;
+    return b;
+}
 void insert_blob(sqlite3* db, const char* query, const scrapds::Blob& b) {
     sqlite3_stmt* stmt = nullptr;
     require(sqlite3_prepare_v2(db, query, -1, &stmt, nullptr) == SQLITE_OK, "fixture prepare failed");
@@ -41,9 +47,10 @@ void fixture(const std::filesystem::path& file) {
     sqlite3* db = nullptr;
     require(sqlite3_open(file.string().c_str(), &db) == SQLITE_OK, "fixture open failed");
     try {
-        sql(db, "CREATE TABLE Game(savegameversion INTEGER,flags INTEGER,seed INTEGER,gametick INTEGER,mods BLOB,uniqueIds BLOB); INSERT INTO Game VALUES(30,1,42,100,x'010203',x'010203040506');CREATE TABLE RigidBody(id INTEGER PRIMARY KEY,worldId INTEGER,data BLOB);CREATE TABLE ChildShape(id INTEGER PRIMARY KEY,bodyId INTEGER,data BLOB);CREATE TABLE Joint(id INTEGER PRIMARY KEY,childShapeIdA INTEGER,childShapeIdB INTEGER,data BLOB);CREATE VIRTUAL TABLE RigidBodyBounds USING rtree(id,minX,maxX,minY,maxY);INSERT INTO RigidBodyBounds VALUES(7,-3,3,-2,2);CREATE TABLE ScriptData(uid INTEGER,key INTEGER,worldId INTEGER,flags INTEGER,data BLOB);INSERT INTO ScriptData VALUES(999,5,0,1,zeroblob(1048576));");
+        sql(db, "CREATE TABLE Game(savegameversion INTEGER,flags INTEGER,seed INTEGER,gametick INTEGER,mods BLOB,uniqueIds BLOB); INSERT INTO Game VALUES(30,1,42,100,x'010203',x'010203040506');CREATE TABLE RigidBody(id INTEGER PRIMARY KEY,worldId INTEGER,data BLOB);CREATE TABLE ChildShape(id INTEGER PRIMARY KEY,bodyId INTEGER,data BLOB);CREATE TABLE Joint(id INTEGER PRIMARY KEY,childShapeIdA INTEGER,childShapeIdB INTEGER,data BLOB);CREATE TABLE Harvestable(id INTEGER PRIMARY KEY,worldId INTEGER,x INTEGER,y INTEGER,size INTEGER,data BLOB);CREATE VIRTUAL TABLE RigidBodyBounds USING rtree(id,minX,maxX,minY,maxY);INSERT INTO RigidBodyBounds VALUES(7,-3,3,-2,2);CREATE TABLE ScriptData(uid INTEGER,key INTEGER,worldId INTEGER,flags INTEGER,data BLOB);INSERT INTO ScriptData VALUES(999,5,0,1,zeroblob(1048576));");
         insert_blob(db, "INSERT INTO RigidBody VALUES(7,0,?1)", body());
         insert_blob(db, "INSERT INTO ChildShape VALUES(11,7,?1)", shape());
+        insert_blob(db, "INSERT INTO Harvestable VALUES(13,1,-38,-40,3,?1)", harvestable());
         sql(db,"INSERT INTO Joint VALUES(3,11,-1,x'0102')");
         scrapds::net::BlobDataEntry terrain;terrain.uid={0x61,0xaa,0x13,0xd7,0xe7,0x15,0x41,0x53,0xa2,0x69,0x4d,0x33,0x8c,0x0c,0x5b,0xd4};terrain.key={1,0,0,0};terrain.world_id=1;terrain.flags=3;
         terrain.payload={0x80,'L','U','A',0,0,0,1,5};const auto saved=scrapds::net::make_saved_blob_data(terrain);
@@ -64,6 +71,7 @@ int main(int argc,char** argv) {
         auto state = scrapds::WorldState::load(source);
         require(state.metadata().tick == 100 && state.bodies().size() == 1 && state.shapes().size() == 1, "load lost metadata or entities");
         require(state.bodies().at(7).prefix.has_value(), "known body prefix not decoded");
+        require(state.harvestables().size()==1&&state.harvestables().at(13).identity_verified&&state.harvestables().at(13).x==-38&&state.harvestables().at(13).y==-40,"saved Harvestable identity not decoded");
         require(state.joints().at(3).shape_b == UINT32_MAX, "world-anchor joint sentinel lost");
         require(state.table_counts().at("ScriptData") == 2, "unknown tables not retained");
         require(state.terrain_generator_data(1)==scrapds::Blob({'L','U','A',0,0,0,1,5})&&!state.terrain_generator_data(2),"terrain generator state extraction failed");
@@ -77,12 +85,16 @@ int main(int argc,char** argv) {
         require(state.bodies().at(7).data == changed, "failed mutation changed state");
         rejects([&]{ state.advance_ticks(UINT64_MAX); }, "tick overflow accepted");
         require(state.metadata().tick == 117, "failed tick advance changed state");
+        require(!state.atomic([&]{state.remove_harvestable(13);return false;})&&state.harvestables().contains(13),"failed compound transaction did not restore Harvestable cache");
+        state.remove_harvestable(13);
+        require(!state.harvestables().contains(13)&&state.table_counts().at("Harvestable")==0,"Harvestable removal did not update native save state");
         state.save_as(dest);
         rejects([&]{ state.save_as(dest); }, "existing save overwritten");
         rejects([&]{ state.save_as(source); }, "source save overwritten");
         auto restored = scrapds::WorldState::load(dest);
         require(restored.metadata().tick == 117 && restored.bodies().at(7).data == changed && restored.shapes().at(11).data == colored, "semantic save roundtrip failed");
         require(restored.table_counts() == state.table_counts(), "save roundtrip lost tables");
+        require(restored.harvestables().empty(),"removed Harvestable survived save/reload");
         sqlite3* db = nullptr; require(sqlite3_open(dest.string().c_str(), &db) == SQLITE_OK, "saved world open failed");
         sqlite3_stmt* stmt = nullptr;
         require(sqlite3_prepare_v2(db,"SELECT maxX FROM RigidBodyBounds WHERE id=7",-1,&stmt,nullptr)==SQLITE_OK,"rtree query failed");

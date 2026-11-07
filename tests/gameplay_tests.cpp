@@ -274,6 +274,9 @@ int main(){try{
     require(result.applied&&result.removed_shapes==std::vector<std::uint32_t>{203}&&result.removed_bodies==std::vector<std::uint32_t>{100}&&!world.shapes().contains(203)&&!world.bodies().contains(100),"last shape did not remove empty body");
     const auto final_update=scrapds::make_object_update(world,result,9,catalog);
     require(final_update.records.size()==2&&final_update.records[0].operation==2&&final_update.records[0].type==1&&final_update.records[0].id==203&&final_update.records[1].operation==2&&final_update.records[1].type==0&&final_update.records[1].id==100,"shape and body removals were not replicated");
+    scrapds::CommandResult harvestable_removal;harvestable_removal.removed_harvestables={77};
+    const auto harvestable_update=scrapds::make_object_update(world,harvestable_removal,10,catalog);
+    require(harvestable_update.records.size()==1&&harvestable_update.records[0].operation==2&&harvestable_update.records[0].type==5&&harvestable_update.records[0].id==77,"Harvestable removal NetObj update malformed");
     const auto removed_save=temp.p/"removed.db";world.save_as(removed_save);auto removed_restored=scrapds::WorldState::load(removed_save);
     require(!removed_restored.shapes().contains(200)&&!removed_restored.shapes().contains(201)&&!removed_restored.shapes().contains(202)&&!removed_restored.shapes().contains(203)&&!removed_restored.bodies().contains(100)&&removed_restored.table_counts().at("RigidBodyBounds")==1,"removed records or RTree bounds survived save/load");
     require(scrapds::WorldState::load(source).shapes().at(11).data==shape,"original save modified by painting");

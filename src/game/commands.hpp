@@ -16,6 +16,8 @@ struct CommandResult {
     std::vector<std::uint32_t> removed_joints;
     struct ContainerSlot { std::uint32_t container_id{},slot{}; };
     std::vector<ContainerSlot> changed_container_slots;
+    // Appended to preserve the layout of the existing result fields.
+    std::vector<std::uint32_t> removed_harvestables;
 };
 // Bounded Creative edits and Survival block build/removal and joint removal.
 // Authentication is checked by transport; other Survival transactions and

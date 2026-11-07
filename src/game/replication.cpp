@@ -18,6 +18,7 @@ net::NetObjectPacket make_object_update(const WorldState& world, const CommandRe
     for (const auto id : result.removed_shapes) update.records.push_back({2, 1, {}, id, {}});
     for (const auto id : result.removed_bodies) update.records.push_back({2, 0, {}, id, {}});
     for (const auto id : result.removed_joints) update.records.push_back({2, 2, {}, id, {}});
+    for (const auto id : result.removed_harvestables) update.records.push_back({2, 5, {}, id, {}});
     for (const auto id : result.created_shapes) {
         const auto it = world.shapes().find(id);
         if (it == world.shapes().end()) throw std::runtime_error("created shape is absent from world state");

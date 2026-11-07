@@ -864,3 +864,8 @@ diverged from the client. The revised cadence needs live-session confirmation.
 - `WorldPhysics` now filters saved static bodies with RTree bounds around active players and mapped dynamic bodies. Unmapped dynamic bodies keep their existing skip behavior; large unbounded world imports require regional anchors. The listener refreshes physics when a player or mapped dynamic body crosses a 128 m sector and keeps `physics.json` coverage counts current.
 - Synthetic tests verify retention of a mapped dynamic body plus nearby static geometry and culling of distant static geometry. A real Survival save region at world 1 `(0, 0)` produced 123 static bodies and culled 968,365 shapes; this smoke run used an empty mapped-dynamic set, so it did not validate captured dynamic bodies. All 20 CTest pass. Live movement, dynamic region crossing and behavior after scene rebuild remain unverified.
 
+## Harvestable save-state foundation (2026-11-07)
+
+- `WorldState` indexes persisted Harvestables by ID, retaining original BLOBs while cross-checking the observed 72-byte identity prefix against SQLite row ID, world, coordinates and size. Read-only load of the local Survival save verified 124,451/124,451 identities. A single-row transactional delete updates the SQLite copy, cache and table count; an enclosing compound transaction can restore it. NetObj removal can emit operation 2/type 5.
+- Fixture tests cover load, identity checks, rollback, save/reload and type-5 removal framing. All 20 CTest pass. Gameplay command `0x28`, loot/Lua storage, type-5 create/state serialization and initial Survival bootstrap remain unimplemented; no Harvestable is consumed by this increment.
+

@@ -59,6 +59,16 @@ struct StoredController {
     std::uint32_t id{}, host_id{}, host_type{};
     Blob data;
 };
+struct StoredHarvestable {
+    std::uint32_t id{};
+    std::uint16_t world_id{};
+    std::int32_t x{}, y{};
+    std::uint8_t size{};
+    Blob data;
+    // The recognized header/row identity fields are cross-checked. Remaining
+    // transform/runtime fields stay opaque and are preserved verbatim.
+    bool identity_verified{};
+};
 struct StoredContainer {
     std::uint32_t id{};
     // Build-889 entries are 22 bytes: two retained opaque bytes, a serialized
@@ -103,6 +113,7 @@ public:
     const std::map<std::uint32_t, StoredShape>& shapes() const;
     const std::map<std::uint32_t, StoredJoint>& joints() const;
     const std::map<std::uint32_t, StoredController>& controllers() const;
+    const std::map<std::uint32_t, StoredHarvestable>& harvestables() const;
     const std::map<std::uint32_t, StoredContainer>& containers() const;
     // Returns the saved quantity only when container, slot and serialized UUID
     // match. Empty slots and unknown layouts return nullopt.
@@ -182,6 +193,10 @@ public:
     // Deletes one saved Joint row transactionally. Higher-level game rules
     // decide whether the caller is allowed to reclaim its inventory item.
     void remove_joint(std::uint32_t id);
+    // Deletes one saved Harvestable row transactionally. Higher-level
+    // gameplay decides whether the interaction may consume it and what loot
+    // or replacement object must be produced.
+    void remove_harvestable(std::uint32_t id);
     void save_as(const std::filesystem::path& output) const;
     // Atomically replaces a server-owned checkpoint and refuses to replace
     // the original source save, even when both paths name the same file.

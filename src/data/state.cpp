@@ -63,6 +63,12 @@ std::uint32_t reference_id(sqlite3_stmt* s, int col) {
     if (sqlite3_column_type(s, col) == SQLITE_INTEGER && sqlite3_column_int64(s, col) == -1) return UINT32_MAX;
     return id(s, col);
 }
+std::int32_t signed32(sqlite3_stmt* s,int col,const char* field) {
+    if(sqlite3_column_type(s,col)!=SQLITE_INTEGER)throw std::runtime_error(std::string("Harvestable ")+field+" must be an integer");
+    const auto value=sqlite3_column_int64(s,col);
+    if(value<INT32_MIN||value>INT32_MAX)throw std::runtime_error(std::string("Harvestable ")+field+" outside int32 range");
+    return static_cast<std::int32_t>(value);
+}
 StoredContainer decode_stored_container(std::uint32_t row_id, Blob data) {
     StoredContainer result;result.id=row_id;result.data=std::move(data);
     const auto& bytes=result.data;
@@ -175,6 +181,7 @@ struct WorldState::Impl {
     std::map<std::uint32_t, StoredShape> shapes;
     std::map<std::uint32_t, StoredJoint> joints;
     std::map<std::uint32_t, StoredController> controllers;
+    std::map<std::uint32_t, StoredHarvestable> harvestable_records;
     std::map<std::uint32_t, StoredContainer> container_records;
     std::set<std::uint32_t> container_ids;
     std::map<std::string, std::uint64_t> counts;
@@ -186,9 +193,10 @@ WorldState::~WorldState() = default;
 
 bool WorldState::atomic(const std::function<bool()>& operation) {
     auto bodies=impl_->bodies; auto shapes=impl_->shapes; auto joints=impl_->joints;
-    auto controllers=impl_->controllers; auto container_records=impl_->container_records; auto container_ids=impl_->container_ids;
+    auto controllers=impl_->controllers; auto harvestable_records=impl_->harvestable_records;
+    auto container_records=impl_->container_records; auto container_ids=impl_->container_ids;
     auto counts=impl_->counts; auto metadata=impl_->metadata; const auto revision=impl_->physics_revision;
-    auto restore=[&] { impl_->bodies.swap(bodies); impl_->shapes.swap(shapes); impl_->joints.swap(joints); impl_->controllers.swap(controllers); impl_->container_records.swap(container_records); impl_->container_ids.swap(container_ids); impl_->counts.swap(counts); std::swap(impl_->metadata,metadata); impl_->physics_revision=revision; };
+    auto restore=[&] { impl_->bodies.swap(bodies); impl_->shapes.swap(shapes); impl_->joints.swap(joints); impl_->controllers.swap(controllers); impl_->harvestable_records.swap(harvestable_records); impl_->container_records.swap(container_records); impl_->container_ids.swap(container_ids); impl_->counts.swap(counts); std::swap(impl_->metadata,metadata); impl_->physics_revision=revision; };
     try {
         bool accepted;
         { Transaction transaction(impl_->db.get()); accepted=operation(); if(accepted) transaction.commit(); }
@@ -467,6 +475,26 @@ WorldState WorldState::load(const std::filesystem::path& source) {
             if (!impl->controllers.emplace(controller.id, std::move(controller)).second) throw std::runtime_error("Duplicate controller ID");
         }
     }
+    if(impl->counts.contains("Harvestable")) {
+        auto s=prepare(db,"SELECT id,worldId,x,y,size,data FROM Harvestable ORDER BY id");
+        while(step(db,s.get())==SQLITE_ROW) {
+            const auto world=id(s.get(),1);
+            if(world>UINT16_MAX)throw std::runtime_error("Harvestable world ID outside uint16 range");
+            const auto size=id(s.get(),4);
+            if(size>UINT8_MAX)throw std::runtime_error("Harvestable size outside uint8 range");
+            StoredHarvestable item{id(s.get(),0),static_cast<std::uint16_t>(world),
+                signed32(s.get(),2,"x"),signed32(s.get(),3,"y"),static_cast<std::uint8_t>(size),blob(s.get(),5),false};
+            const auto& bytes=item.data;
+            if(bytes.size()==72&&bytes[0]==5&&bytes[1]==0&&bytes[2]==1) {
+                const auto read32=[&](std::size_t at){return (std::uint32_t(bytes[at])<<24)|(std::uint32_t(bytes[at+1])<<16)|(std::uint32_t(bytes[at+2])<<8)|bytes[at+3];};
+                const auto saved_world=std::uint16_t((std::uint16_t(bytes[16])<<8)|bytes[17]);
+                const auto saved_x=std::bit_cast<std::int32_t>(read32(12));
+                const auto saved_y=std::bit_cast<std::int32_t>(read32(8));
+                item.identity_verified=read32(3)==item.id&&bytes[7]==item.size&&saved_y==item.y&&saved_x==item.x&&saved_world==item.world_id;
+            }
+            if(!impl->harvestable_records.emplace(item.id,std::move(item)).second)throw std::runtime_error("Duplicate Harvestable ID");
+        }
+    }
     if (impl->counts.contains("Container")) {
         auto s = prepare(db, "SELECT id,data FROM Container ORDER BY id");
         while (step(db, s.get()) == SQLITE_ROW) {
@@ -484,6 +512,7 @@ const std::map<std::uint32_t, StoredBody>& WorldState::bodies() const { return i
 const std::map<std::uint32_t, StoredShape>& WorldState::shapes() const { return impl_->shapes; }
 const std::map<std::uint32_t, StoredJoint>& WorldState::joints() const { return impl_->joints; }
 const std::map<std::uint32_t, StoredController>& WorldState::controllers() const { return impl_->controllers; }
+const std::map<std::uint32_t, StoredHarvestable>& WorldState::harvestables() const { return impl_->harvestable_records; }
 const std::map<std::uint32_t, StoredContainer>& WorldState::containers() const { return impl_->container_records; }
 std::optional<std::uint32_t> WorldState::container_slot_quantity(std::uint32_t container_id,
     std::uint32_t slot,const std::array<std::uint8_t,16>& saved_item_uuid) const {
@@ -982,6 +1011,21 @@ void WorldState::remove_joint(std::uint32_t id) {
     impl_->counts.swap(counts);
     ++impl_->physics_revision;
 }
+void WorldState::remove_harvestable(std::uint32_t id) {
+    const auto found=impl_->harvestable_records.find(id);
+    if(found==impl_->harvestable_records.end())throw std::runtime_error("unknown-harvestable");
+    auto counts=impl_->counts;
+    Transaction transaction(impl_->db.get());
+    auto remove=prepare(impl_->db.get(),"DELETE FROM Harvestable WHERE id=?1");
+    if(sqlite3_bind_int64(remove.get(),1,id)!=SQLITE_OK||
+       step(impl_->db.get(),remove.get())!=SQLITE_DONE||sqlite3_changes(impl_->db.get())!=1)
+        throw std::runtime_error("cannot-delete-harvestable");
+    if(counts.contains("Harvestable"))--counts.at("Harvestable");
+    transaction.commit();
+    impl_->harvestable_records.erase(found);
+    impl_->counts.swap(counts);
+    ++impl_->physics_revision;
+}
 SplitShape WorldState::split_block_shape(std::uint32_t id,
     const std::array<std::int32_t,3>& selected_position,
     const std::array<std::int32_t,3>& selected_dimensions,
@@ -1099,13 +1143,16 @@ void WorldState::save_checkpoint(const std::filesystem::path& output) const {
 #endif
 }
 std::string WorldState::summary_json() const {
-    std::size_t decoded_bodies = 0, decoded_shapes = 0;
+    std::size_t decoded_bodies = 0, decoded_shapes = 0, verified_harvestables=0;
     for (const auto& [key, body] : impl_->bodies) { (void)key; if (body.prefix) ++decoded_bodies; }
     for (const auto& [key, shape] : impl_->shapes) { (void)key; if (shape.prefix) ++decoded_shapes; }
+    for(const auto& [key,harvestable]:impl_->harvestable_records){(void)key;if(harvestable.identity_verified)++verified_harvestables;}
     std::ostringstream out;
     out << "{\"source\":" << json_quote(utf8(impl_->source)) << ",\"storage\":\"native-in-memory-sqlite\",\"source_read_only\":true,\"save_version\":" << impl_->metadata.save_version
         << ",\"flags\":" << impl_->metadata.flags << ",\"seed\":" << impl_->metadata.seed << ",\"game_tick\":" << impl_->metadata.tick
         << ",\"bodies\":" << impl_->bodies.size() << ",\"shapes\":" << impl_->shapes.size() << ",\"joints\":" << impl_->joints.size()
+        << ",\"harvestables\":" << impl_->harvestable_records.size() << ",\"harvestable_rows_with_verified_identity\":" << verified_harvestables
+        << ",\"harvestable_rows_with_unverified_identity\":" << (impl_->harvestable_records.size()-verified_harvestables)
         << ",\"decoded_body_prefixes\":" << decoded_bodies << ",\"decoded_shape_prefixes\":" << decoded_shapes
         << ",\"unknown_blob_fields_preserved\":true,\"physics_simulated\":false,\"tables\":{";
     bool first = true;
