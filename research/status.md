@@ -869,3 +869,9 @@ diverged from the client. The revised cadence needs live-session confirmation.
 - `WorldState` indexes persisted Harvestables by ID, retaining original BLOBs while cross-checking the observed 72-byte identity prefix against SQLite row ID, world, coordinates and size. Read-only load of the local Survival save verified 124,451/124,451 identities. A single-row transactional delete updates the SQLite copy, cache and table count; an enclosing compound transaction can restore it. NetObj removal can emit operation 2/type 5.
 - Fixture tests cover load, identity checks, rollback, save/reload and type-5 removal framing. All 20 CTest pass. Gameplay command `0x28`, loot/Lua storage, type-5 create/state serialization and initial Survival bootstrap remain unimplemented; no Harvestable is consumed by this increment.
 
+## Harvestable asset catalog (2026-11-07)
+
+- `AssetDefinitions` now scans vanilla `Data/Harvestables` and `Survival/Harvestables` `.harvestableset` files and indexes UUID, display name, script class/path, and the GenericDrop interaction/loot fields. The direct installed-game fixture loads 208 unique Harvestable definitions.
+- Loading vanilla CharacterSets exposed a static cinematic entity whose nominal capsule is 10×10. Asset parsing now retains the profile; native-player physics only applies capsule geometry when height is at least the diameter, otherwise it keeps the safe default. Numeric range validation remains in place.
+- Synthetic gameplay fixture and installed asset catalog check pass; all 20 CTest pass. This catalog does not resolve per-object Lua storage, loot selection, player-to-target distance, Harvestable create/state replication, or Survival bootstrap. Command `0x28` remains rejected and no object is consumed.
+

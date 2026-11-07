@@ -528,9 +528,14 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
     CharacterPhysicsProfile character_profile;
     if(native_players&&native_assets) {
         if(const auto* definition=native_assets->find_character(net::format_character_asset_uuid(spawn_template->asset_uuid_memory))) {
-            if(definition->capsule_radius)character_profile.capsule_radius=*definition->capsule_radius;
-            if(definition->capsule_height)character_profile.capsule_height=*definition->capsule_height;
-            if(definition->crouch_height)character_profile.crouch_height=*definition->crouch_height;
+            const auto radius=definition->capsule_radius.value_or(character_profile.capsule_radius);
+            const auto height=definition->capsule_height.value_or(character_profile.capsule_height);
+            if(std::isfinite(radius)&&std::isfinite(height)&&radius>0&&height>=2*radius) {
+                character_profile.capsule_radius=radius;
+                character_profile.capsule_height=height;
+                if(definition->crouch_height&&*definition->crouch_height>=2*radius&&*definition->crouch_height<=height)
+                    character_profile.crouch_height=*definition->crouch_height;
+            }
             if(definition->move_speed)character_profile.move_speed=*definition->move_speed;
             if(definition->sprint_speed)character_profile.sprint_speed=*definition->sprint_speed;
             if(definition->crouch_speed)character_profile.crouch_speed=*definition->crouch_speed;
@@ -540,7 +545,8 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
             character_profile.maximum_horizontal_speed=std::max({character_profile.move_speed,character_profile.sprint_speed,character_profile.crouch_speed});
         }
         if(!std::isfinite(character_profile.maximum_horizontal_speed)||character_profile.maximum_horizontal_speed<=0||
-           character_profile.capsule_height<2*character_profile.capsule_radius)
+           !std::isfinite(character_profile.capsule_radius)||!std::isfinite(character_profile.capsule_height)||
+           character_profile.capsule_radius<=0||character_profile.capsule_height<2*character_profile.capsule_radius)
             throw std::runtime_error("invalid-player-character-physics-profile");
     }
     using CollisionRegionKey=std::tuple<std::uint16_t,std::int64_t,std::int64_t>;

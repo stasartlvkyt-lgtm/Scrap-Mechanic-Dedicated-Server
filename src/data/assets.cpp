@@ -168,11 +168,46 @@ AssetDefinitions AssetDefinitions::load(const std::filesystem::path& root) {
                     if(type!="true"&&type!="false")throw std::runtime_error("Character definition field must be boolean: movement.canSwim");
                     character.can_swim=sqlite3_column_int(s.get(),21)!=0;
                 }
-                if(character.capsule_radius&&character.capsule_height&&*character.capsule_height<2.0*(*character.capsule_radius))
-                    throw std::runtime_error("Character capsule height is smaller than its diameter");
                 result.characters_.insert_or_assign(character.uuid,std::move(character));
             }
             if(status!=SQLITE_DONE)throw std::runtime_error("Invalid Character definition JSON: "+std::string(sqlite3_errmsg(db.get())));
+        }
+    }
+    for(const auto* branch:{"Data","Survival"}) {
+        const auto directory=root/branch/"Harvestables"/"Database"/"HarvestableSets";
+        if(!std::filesystem::is_directory(directory))continue;
+        std::vector<std::filesystem::path> paths;
+        for(const auto& item:std::filesystem::recursive_directory_iterator(directory))
+            if(item.is_regular_file()&&item.path().extension()==".harvestableset")paths.push_back(item.path());
+        std::sort(paths.begin(),paths.end());
+        for(const auto& path:paths) {
+            if(std::filesystem::file_size(path)>16*1024*1024)throw std::runtime_error("Harvestable definition file exceeds 16 MiB");
+            std::ifstream file(path,std::ios::binary);
+            if(!file)throw std::runtime_error("Cannot read Harvestable definitions");
+            std::string source{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
+            sqlite3_stmt* statement=nullptr;
+            const char* query="SELECT json_extract(value,'$.uuid'),json_extract(value,'$.name'),json_extract(value,'$.script.class'),json_extract(value,'$.script.file'),"
+                "json_extract(value,'$.script.data.genericDropHarvestable.lootSource'),json_type(value,'$.script.data.genericDropHarvestable.reactToInteraction'),"
+                "json_extract(value,'$.script.data.genericDropHarvestable.reactToInteraction') FROM json_each(?1,'$.harvestableList')";
+            const auto prepared=sqlite3_prepare_v2(db.get(),query,-1,&statement,nullptr);
+            std::unique_ptr<sqlite3_stmt,decltype(&sqlite3_finalize)> s(statement,sqlite3_finalize);
+            if(prepared!=SQLITE_OK)throw std::runtime_error("SQLite JSON reader is unavailable");
+            sqlite3_bind_text64(s.get(),1,source.data(),source.size(),SQLITE_TRANSIENT,SQLITE_UTF8);
+            int status;
+            while((status=sqlite3_step(s.get()))==SQLITE_ROW) {
+                HarvestableAssetDefinition definition;
+                definition.uuid=text(s.get(),0);definition.name=text(s.get(),1);
+                definition.script_class=text(s.get(),2);definition.script_file=text(s.get(),3);
+                if(definition.uuid.size()!=36)throw std::runtime_error("Invalid Harvestable UUID in definitions");
+                if(sqlite3_column_type(s.get(),4)!=SQLITE_NULL)definition.loot_source=text(s.get(),4);
+                if(sqlite3_column_type(s.get(),5)!=SQLITE_NULL) {
+                    const auto type=text(s.get(),5);
+                    if(type!="true"&&type!="false")throw std::runtime_error("Harvestable reactToInteraction must be boolean");
+                    definition.react_to_interaction=sqlite3_column_int(s.get(),6)!=0;
+                }
+                result.harvestables_.insert_or_assign(definition.uuid,std::move(definition));
+            }
+            if(status!=SQLITE_DONE)throw std::runtime_error("Invalid Harvestable definition JSON: "+std::string(sqlite3_errmsg(db.get())));
         }
     }
     if(result.entries_.empty())throw std::runtime_error("No Data/Survival shape definitions found");
@@ -180,4 +215,5 @@ AssetDefinitions AssetDefinitions::load(const std::filesystem::path& root) {
 }
 const AssetDefinition* AssetDefinitions::find(const std::string& uuid) const { const auto it=entries_.find(uuid); return it==entries_.end()?nullptr:&it->second; }
 const CharacterAssetDefinition* AssetDefinitions::find_character(const std::string& uuid) const { const auto it=characters_.find(uuid); return it==characters_.end()?nullptr:&it->second; }
+const HarvestableAssetDefinition* AssetDefinitions::find_harvestable(const std::string& uuid) const { const auto it=harvestables_.find(uuid); return it==harvestables_.end()?nullptr:&it->second; }
 }

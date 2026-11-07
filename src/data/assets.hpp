@@ -38,14 +38,22 @@ struct CharacterAssetDefinition {
     std::optional<double> move_speed, sprint_speed, crouch_speed, slow_down_speed, jump_impulse;
     std::optional<bool> can_swim;
 };
+struct HarvestableAssetDefinition {
+    std::string uuid,name,script_class,script_file;
+    std::optional<std::string> loot_source;
+    std::optional<bool> react_to_interaction;
+};
 class AssetDefinitions {
 public:
     static AssetDefinitions load(const std::filesystem::path& installation_or_pack);
     const AssetDefinition* find(const std::string& uuid) const;
     const CharacterAssetDefinition* find_character(const std::string& uuid) const;
+    const HarvestableAssetDefinition* find_harvestable(const std::string& uuid) const;
     std::size_t size() const { return entries_.size(); }
+    std::size_t harvestable_size() const { return harvestables_.size(); }
 private:
     std::map<std::string, AssetDefinition> entries_;
     std::map<std::string, CharacterAssetDefinition> characters_;
+    std::map<std::string, HarvestableAssetDefinition> harvestables_;
 };
 }

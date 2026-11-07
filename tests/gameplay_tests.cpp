@@ -21,7 +21,8 @@ void sql(sqlite3* db,const char* q){char* e=nullptr;if(sqlite3_exec(db,q,nullptr
 void insert(sqlite3* db,const char* q,const scrapds::Blob& b){sqlite3_stmt* s=nullptr;require(sqlite3_prepare_v2(db,q,-1,&s,nullptr)==SQLITE_OK,"fixture prepare");sqlite3_bind_blob64(s,1,b.data(),b.size(),SQLITE_TRANSIENT);const int code=sqlite3_step(s);sqlite3_finalize(s);require(code==SQLITE_DONE,"fixture insert");}
 struct Temp { std::filesystem::path p=std::filesystem::temp_directory_path()/("scrapds-gameplay-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));Temp(){std::filesystem::create_directory(p);}~Temp(){std::error_code ec;std::filesystem::remove_all(p,ec);}};
 }
-int main(){try{
+int main(int argc,char** argv){try{
+    require(argc<=2,"gameplay_tests accepts at most one game installation path");
     std::set<int> peers{1,2,3},closing{3},desynchronized;std::vector<int> attempted;
     scrapds::net::deliver_world_update(peers,closing,desynchronized,[&](int peer){attempted.push_back(peer);return peer!=2;});
     require(attempted==std::vector<int>({1,2})&&closing==std::set<int>({2,3})&&desynchronized==std::set<int>({2}),"failed reliable world update did not isolate its peer");
@@ -38,12 +39,22 @@ int main(){try{
           {"uuid":"cccccccc-cccc-cccc-cccc-cccccccccccc","paint":{"enable":false,"defaultColor":"007572ff"},},
         ],
     })";}
+    const auto harvestable_definitions=temp.p/"Survival/Harvestables/Database/HarvestableSets";std::filesystem::create_directories(harvestable_definitions);
+    {std::ofstream file(harvestable_definitions/"test.harvestableset");file<<R"({"harvestableList":[{"uuid":"dddddddd-dddd-dddd-dddd-dddddddddddd","name":"test harvestable","script":{"class":"GenericDropHarvestable","file":"$SURVIVAL_DATA/Scripts/game/harvestable/GenericDropHarvestable.lua","data":{"genericDropHarvestable":{"lootSource":"loot_source_test","reactToInteraction":true}}}}]})";}
     auto assets=scrapds::AssetDefinitions::load(temp.p);require(assets.size()==3,"asset definition not loaded");
+    const auto* harvestable_asset=assets.find_harvestable("dddddddd-dddd-dddd-dddd-dddddddddddd");
+    require(assets.harvestable_size()==1&&harvestable_asset&&harvestable_asset->script_class=="GenericDropHarvestable"&&harvestable_asset->loot_source=="loot_source_test"&&harvestable_asset->react_to_interaction==true,"Harvestable script/config definition not loaded");
     require(assets.find("00000000-0000-0000-0000-000000000000")->default_color_abgr==0xff332211,"default color channel order");
     const auto* paintable_character=assets.find_character("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
     require(paintable_character&&paintable_character->paint_enabled==true&&paintable_character->default_paint_color_rgba==0xffff5c03,"Character paint definition was not decoded");
     const auto* nonpaintable_character=assets.find_character("cccccccc-cccc-cccc-cccc-cccccccccccc");
     require(nonpaintable_character&&nonpaintable_character->paint_enabled==false&&nonpaintable_character->default_paint_color_rgba==0xff727500,"Character disabled paint/default color was not decoded");
+    std::size_t installed_harvestable_assets=0;
+    if(argc==2) {
+        const auto installed=scrapds::AssetDefinitions::load(std::filesystem::u8path(argv[1]));
+        installed_harvestable_assets=installed.harvestable_size();
+        require(installed_harvestable_assets>=200,"installed Harvestable asset catalog is unexpectedly incomplete");
+    }
     sqlite3* db=nullptr;const auto source=temp.p/"source.db";require(sqlite3_open(source.string().c_str(),&db)==SQLITE_OK,"fixture open");
     sql(db,"CREATE TABLE Game(savegameversion INTEGER,flags INTEGER,seed INTEGER,gametick INTEGER,uniqueIds BLOB);INSERT INTO Game VALUES(30,1,2,3,NULL);CREATE TABLE RigidBody(id INTEGER PRIMARY KEY,worldId INTEGER,data BLOB);CREATE TABLE ChildShape(id INTEGER PRIMARY KEY,bodyId INTEGER,data BLOB);CREATE TABLE Joint(id INTEGER PRIMARY KEY,childShapeIdA INTEGER,childShapeIdB INTEGER,data BLOB);CREATE VIRTUAL TABLE RigidBodyBounds USING rtree(id,minX,maxX,minY,maxY);INSERT INTO RigidBodyBounds VALUES(7,-20,20,-20,20)");
     scrapds::Blob counters(72);word(counters,0,17);for(std::size_t i=1;i<=17;++i)word(counters,i*4,1000+std::uint32_t(i));word(counters,4,100);word(counters,12,200);insert(db,"UPDATE Game SET uniqueIds=?1",counters);
@@ -280,5 +291,7 @@ int main(){try{
     const auto removed_save=temp.p/"removed.db";world.save_as(removed_save);auto removed_restored=scrapds::WorldState::load(removed_save);
     require(!removed_restored.shapes().contains(200)&&!removed_restored.shapes().contains(201)&&!removed_restored.shapes().contains(202)&&!removed_restored.shapes().contains(203)&&!removed_restored.bodies().contains(100)&&removed_restored.table_counts().at("RigidBodyBounds")==1,"removed records or RTree bounds survived save/load");
     require(scrapds::WorldState::load(source).shapes().at(11).data==shape,"original save modified by painting");
-    std::cout<<"native gameplay checks passed\n";
+    std::cout<<"native gameplay checks passed";
+    if(argc==2)std::cout<<"; installed harvestable assets="<<installed_harvestable_assets;
+    std::cout<<'\n';
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}}
