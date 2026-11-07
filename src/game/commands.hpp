@@ -19,9 +19,9 @@ struct CommandResult {
     // Appended to preserve the layout of the existing result fields.
     std::vector<std::uint32_t> removed_harvestables;
 };
-// Bounded Creative edits and Survival block build/removal and joint removal.
-// Authentication is checked by transport; other Survival transactions and
-// character paint rules remain separate.
+// Bounded Creative edits and Survival build/removal, LootHarvestable pickup,
+// and joint transactions. Authentication is checked by transport; gameplay
+// handlers remain limited to the explicitly supported object variants.
 CommandResult apply_game_command(WorldState& world, const AssetDefinitions& assets, const net::GameCommand& command,
     std::uint16_t world_id = 0,std::optional<std::uint32_t> player_container_id = std::nullopt);
 }

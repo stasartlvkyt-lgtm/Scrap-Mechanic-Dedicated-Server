@@ -647,6 +647,43 @@ std::vector<StoredBlobDataEntry> WorldState::terrain_generator_entries() const {
 std::vector<StoredBlobDataEntry> WorldState::script_data_entries(const std::array<std::uint8_t,16>& uid) const {
     return impl_->counts.contains("ScriptData")?read_saved_blob_entries(impl_->db.get(),"ScriptData",&uid):std::vector<StoredBlobDataEntry>{};
 }
+std::optional<StoredHarvestableScriptData> WorldState::harvestable_script_data(std::uint32_t id) const {
+    const auto harvestable=impl_->harvestable_records.find(id);
+    if(harvestable==impl_->harvestable_records.end())throw std::runtime_error("unknown-harvestable");
+    if(!impl_->counts.contains("ScriptData"))return std::nullopt;
+    const std::array<std::uint8_t,4> key{std::uint8_t(id),std::uint8_t(id>>8),std::uint8_t(id>>16),std::uint8_t(id>>24)};
+    auto query=prepare(impl_->db.get(),"SELECT uid,flags,data FROM ScriptData WHERE key=?1 AND worldId=?2 ORDER BY uid LIMIT 2");
+    if(sqlite3_bind_blob(query.get(),1,key.data(),int(key.size()),SQLITE_TRANSIENT)!=SQLITE_OK||
+       sqlite3_bind_int(query.get(),2,harvestable->second.world_id)!=SQLITE_OK)fail(impl_->db.get(),"Binding Harvestable ScriptData identity");
+    if(step(impl_->db.get(),query.get())!=SQLITE_ROW)return std::nullopt;
+    if(sqlite3_column_type(query.get(),0)!=SQLITE_BLOB||sqlite3_column_type(query.get(),1)!=SQLITE_INTEGER||sqlite3_column_type(query.get(),2)!=SQLITE_BLOB)
+        throw std::runtime_error("invalid-harvestable-script-data-row");
+    const auto uid=blob(query.get(),0);const auto flags=sqlite3_column_int64(query.get(),1);const auto data=blob(query.get(),2);
+    if(uid.size()!=16||flags<0||flags>UINT8_MAX)throw std::runtime_error("invalid-harvestable-script-data-identity");
+    const auto entry=net::parse_saved_blob_data(data);
+    if(!std::equal(uid.begin(),uid.end(),entry.uid.begin())||entry.key!=Blob(key.begin(),key.end())||
+       entry.world_id!=harvestable->second.world_id||entry.flags!=flags)
+        throw std::runtime_error("harvestable-script-data-row-disagrees-with-entry");
+    const auto extra=step(impl_->db.get(),query.get());
+    if(extra==SQLITE_ROW)throw std::runtime_error("ambiguous-harvestable-script-data");
+    if(extra!=SQLITE_DONE)fail(impl_->db.get(),"Reading Harvestable ScriptData rows");
+    if(entry.payload.empty()||entry.payload.size()>16u*1024u*1024u)throw std::runtime_error("invalid-harvestable-script-data-size");
+    constexpr std::array<std::uint8_t,7> magic{'L','U','A',0,0,0,1};
+    Blob decoded;
+    if(entry.payload.size()>=magic.size()&&std::equal(magic.begin(),magic.end(),entry.payload.begin()))decoded=entry.payload;
+    else {
+        decoded.resize(16u*1024u*1024u);
+        const auto size=LZ4_decompress_safe(reinterpret_cast<const char*>(entry.payload.data()),reinterpret_cast<char*>(decoded.data()),int(entry.payload.size()),int(decoded.size()));
+        if(size<int(magic.size())||!std::equal(magic.begin(),magic.end(),decoded.begin()))throw std::runtime_error("unsupported-harvestable-script-data-payload");
+        decoded.resize(std::size_t(size));
+    }
+    StoredHarvestableScriptData result;
+    std::copy(uid.begin(),uid.end(),result.entry.uid.begin());result.entry.key.assign(key.begin(),key.end());
+    result.entry.world_id=entry.world_id;result.entry.flags=entry.flags;result.entry.payload=entry.payload;
+    result.value=decode_saved_lua_value(decoded);
+    if(result.value.kind!=SavedLuaValue::Kind::table)throw std::runtime_error("harvestable-script-data-root-is-not-table");
+    return result;
+}
 std::vector<StoredBlobDataEntry> WorldState::generic_data_entries() const {
     return impl_->counts.contains("GenericData")?read_saved_blob_entries(impl_->db.get(),"GenericData"):std::vector<StoredBlobDataEntry>{};
 }
@@ -1026,6 +1063,18 @@ void WorldState::remove_harvestable(std::uint32_t id) {
        step(impl_->db.get(),remove.get())!=SQLITE_DONE||sqlite3_changes(impl_->db.get())!=1)
         throw std::runtime_error("cannot-delete-harvestable");
     if(counts.contains("Harvestable"))--counts.at("Harvestable");
+    std::uint64_t removed_script_rows=0;
+    if(counts.contains("ScriptData")) {
+        const auto world_id=found->second.world_id;
+        const std::array<std::uint8_t,4> key{std::uint8_t(id),std::uint8_t(id>>8),std::uint8_t(id>>16),std::uint8_t(id>>24)};
+        auto script=prepare(impl_->db.get(),"DELETE FROM ScriptData WHERE key=?1 AND worldId=?2");
+        if(sqlite3_bind_blob(script.get(),1,key.data(),int(key.size()),SQLITE_TRANSIENT)!=SQLITE_OK||
+           sqlite3_bind_int(script.get(),2,world_id)!=SQLITE_OK||step(impl_->db.get(),script.get())!=SQLITE_DONE)
+            throw std::runtime_error("cannot-delete-harvestable-script-data");
+        removed_script_rows=std::uint64_t(sqlite3_changes(impl_->db.get()));
+        if(removed_script_rows>counts.at("ScriptData"))throw std::runtime_error("invalid-script-data-row-count");
+        counts.at("ScriptData")-=removed_script_rows;
+    }
     transaction.commit();
     impl_->harvestable_records.erase(found);
     impl_->counts.swap(counts);

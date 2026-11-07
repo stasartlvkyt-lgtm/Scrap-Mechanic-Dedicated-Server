@@ -25,6 +25,22 @@ struct Temp {
 };
 void sql(sqlite3* db, const char* query) { char* error = nullptr; if (sqlite3_exec(db, query, nullptr, nullptr, &error) != SQLITE_OK) { const std::string value = error ? error : "SQLite failure"; sqlite3_free(error); throw std::runtime_error(value); } }
 void be32(scrapds::Blob& bytes, std::size_t at, std::uint32_t n) { for (int i = 0; i < 4; ++i) bytes.at(at + i) = static_cast<std::uint8_t>(n >> (24 - 8*i)); }
+struct LuaWriter {
+    scrapds::Blob bytes{'L','U','A',0,0,0,1};std::size_t bit{56};
+    void bits(std::uint64_t value,unsigned count) {
+        for(unsigned i=0;i<count;++i,++bit) {
+            if(bit/8>=bytes.size())bytes.push_back(0);
+            if((value>>(count-1-i))&1)bytes[bit/8]|=std::uint8_t(1u<<(7-bit%8));
+        }
+    }
+    void string(std::string_view value) {
+        bits(4,8);bits(value.size(),32);bit=(bit+7)&~std::size_t(7);
+        bytes.insert(bytes.end(),value.begin(),value.end());bit=bytes.size()*8;
+    }
+    void table(std::uint32_t count){bits(5,8);bits(count,32);bits(0,1);}
+    void uuid(const std::array<std::uint8_t,16>& value){bits(100,8);bits(10001,32);for(auto byte:value)bits(byte,8);}
+    void integer8(std::uint8_t value){bits(8,8);bits(value,8);}
+};
 void number(scrapds::Blob& bytes, std::size_t at, float n) { be32(bytes, at, std::bit_cast<std::uint32_t>(n)); }
 scrapds::Blob body() {
     scrapds::Blob bytes(60); bytes[1] = 1; bytes[2] = 1; be32(bytes, 3, 7); bytes[8] = 0;
@@ -72,6 +88,12 @@ void fixture(const std::filesystem::path& file) {
         sqlite3_stmt* generator=nullptr;require(sqlite3_prepare_v2(db,"INSERT INTO ScriptData VALUES(?1,?2,1,3,?3)",-1,&generator,nullptr)==SQLITE_OK,"terrain fixture prepare failed");
         sqlite3_bind_blob(generator,1,terrain.uid.data(),16,SQLITE_TRANSIENT);sqlite3_bind_blob(generator,2,terrain.key.data(),4,SQLITE_TRANSIENT);sqlite3_bind_blob64(generator,3,saved.data(),saved.size(),SQLITE_TRANSIENT);
         const auto inserted=sqlite3_step(generator);sqlite3_finalize(generator);require(inserted==SQLITE_DONE,"terrain fixture insert failed");
+        scrapds::net::BlobDataEntry loot;loot.uid={0x2a,0x3e,0xec,0x65,0xa4,0x59,0x54,0xb7,0xbf,0x5f,0x42,0x42,0xd2,0x31,0x08,0x93};loot.key={13,0,0,0};loot.world_id=1;loot.flags=3;
+        LuaWriter lua;lua.table(2);lua.string("uuid");lua.uuid(saved_uuid_from_text("8d3b98de-c981-4f05-abfe-d22ee4781d33"));lua.string("quantity");lua.integer8(3);loot.payload=std::move(lua.bytes);
+        const auto loot_saved=scrapds::net::make_saved_blob_data(loot);
+        sqlite3_stmt* storage=nullptr;require(sqlite3_prepare_v2(db,"INSERT INTO ScriptData VALUES(?1,?2,1,3,?3)",-1,&storage,nullptr)==SQLITE_OK,"loot storage prepare failed");
+        sqlite3_bind_blob(storage,1,loot.uid.data(),16,SQLITE_TRANSIENT);sqlite3_bind_blob(storage,2,loot.key.data(),4,SQLITE_TRANSIENT);sqlite3_bind_blob64(storage,3,loot_saved.data(),loot_saved.size(),SQLITE_TRANSIENT);
+        const auto loot_inserted=sqlite3_step(storage);sqlite3_finalize(storage);require(loot_inserted==SQLITE_DONE,"loot storage insert failed");
         sqlite3_close(db);
     } catch (...) { sqlite3_close(db); throw; }
 }
@@ -90,8 +112,12 @@ int main(int argc,char** argv) {
         constexpr std::array<std::uint8_t,16> expected_harvestable_uuid{0x60,0xd3,0x50,0xe3,0xe8,0x7a,0x67,0xad,0x93,0x4b,0xdb,0x63,0xba,0xca,0x11,0x84};
         require(state.harvestables().at(13).saved_asset_uuid==expected_harvestable_uuid,"saved Harvestable asset UUID not decoded in native byte order");
         require(state.joints().at(3).shape_b == UINT32_MAX, "world-anchor joint sentinel lost");
-        require(state.table_counts().at("ScriptData") == 2, "unknown tables not retained");
+        require(state.table_counts().at("ScriptData") == 3, "unknown tables not retained");
         require(state.terrain_generator_data(1)==scrapds::Blob({'L','U','A',0,0,0,1,5})&&!state.terrain_generator_data(2),"terrain generator state extraction failed");
+        const auto loot_state=state.harvestable_script_data(13);
+        const auto* stored_item=loot_state?scrapds::saved_lua_field(loot_state->value,"uuid"):nullptr;
+        const auto* stored_quantity=loot_state?scrapds::saved_lua_field(loot_state->value,"quantity"):nullptr;
+        require(stored_item&&stored_item->kind==scrapds::SavedLuaValue::Kind::uuid&&stored_item->uuid==saved_uuid_from_text("8d3b98de-c981-4f05-abfe-d22ee4781d33")&&stored_quantity&&stored_quantity->number==3,"Harvestable ScriptData Lua storage was not decoded");
         state.advance_ticks(17);
         auto changed = body(); number(changed, 17, 9); number(changed, 43, 1.25f);
         state.replace_body_blob(7, changed);
@@ -104,7 +130,7 @@ int main(int argc,char** argv) {
         require(state.metadata().tick == 117, "failed tick advance changed state");
         require(!state.atomic([&]{state.remove_harvestable(13);return false;})&&state.harvestables().contains(13),"failed compound transaction did not restore Harvestable cache");
         state.remove_harvestable(13);
-        require(!state.harvestables().contains(13)&&state.table_counts().at("Harvestable")==0,"Harvestable removal did not update native save state");
+        require(!state.harvestables().contains(13)&&state.table_counts().at("Harvestable")==0&&state.table_counts().at("ScriptData")==2,"Harvestable removal did not clean its ScriptData state");
         state.save_as(dest);
         rejects([&]{ state.save_as(dest); }, "existing save overwritten");
         rejects([&]{ state.save_as(source); }, "source save overwritten");
@@ -193,6 +219,7 @@ int main(int argc,char** argv) {
         const auto other_pose=scrapds::decode_rigid_body_pose(negative.bodies().at(other_world.body_id).data);
         require(other_pose->world_id==1&&other_pose->repeated_world_id==1&&negative.bodies().at(other_world.body_id).data.at(55)==0,"repeated world ID was confused with flags");
         if(argc>=2){auto actual=scrapds::WorldState::load(argv[1]);const auto terrain=actual.terrain_generator_data(1);require(terrain&&terrain->size()>1000,"real survival terrain generator state missing");const auto cells=scrapds::decode_overworld_cells(*terrain);require(cells.size()==16128,"real survival tile grid mismatch");std::cout<<"survival terrain state: "<<terrain->size()<<" bytes, "<<cells.size()<<" cells\n";
+            if(argc>=4){const auto requested=std::stoul(argv[3]);if(requested>UINT32_MAX)throw std::runtime_error("requested Harvestable ID outside uint32");const auto stored=actual.harvestable_script_data(std::uint32_t(requested));require(stored.has_value(),"requested Harvestable has no ScriptData");const auto* item=scrapds::saved_lua_field(stored->value,"uuid");const auto* quantity=scrapds::saved_lua_field(stored->value,"quantity");require(item&&item->kind==scrapds::SavedLuaValue::Kind::uuid&&quantity&&quantity->kind==scrapds::SavedLuaValue::Kind::number,"requested Harvestable has no loot UUID/quantity");std::cout<<"decoded LootHarvestable ScriptData for id "<<requested<<": quantity="<<quantity->number<<", UUID value present\n";}
             if(argc>=3){const auto assets=scrapds::AssetDefinitions::load(std::filesystem::u8path(argv[2]));std::set<std::array<std::uint8_t,16>> installed_harvestables;for(const auto& [uuid,definition]:assets.harvestables()){(void)definition;installed_harvestables.insert(saved_uuid_from_text(uuid));}std::size_t decoded_harvestables=0,unmatched_harvestables=0;for(const auto& [id,item]:actual.harvestables()){(void)id;if(!item.saved_asset_uuid)continue;++decoded_harvestables;if(!installed_harvestables.contains(*item.saved_asset_uuid))++unmatched_harvestables;}require(decoded_harvestables>100000&&unmatched_harvestables==0,"real Survival Harvestable UUID mapping mismatch");std::cout<<"matched "<<decoded_harvestables<<" saved Harvestable UUIDs against "<<installed_harvestables.size()<<" installed assets\n";
                 const auto catalog=scrapds::index_game_terrain_tiles(argv[2]);std::size_t matched=0;for(const auto& cell:cells)if(catalog.contains(cell.tile_uuid))++matched;require(matched>10000,"real survival tile UUID mapping mismatch");const auto& cell=cells.front();(void)scrapds::read_overworld_tile_voxels(cell,catalog);const auto heights=scrapds::read_terrain_tile_heights(catalog.at(cell.tile_uuid),cell.tile_x,cell.tile_y);require(heights.side==33&&heights.samples.size()==1089,"real survival tile heights missing");
                 const auto generated=scrapds::decode_overworld_terrain(*terrain);const auto spawn=std::find_if(generated.cells.begin(),generated.cells.end(),[](const auto& c){return c.x==0&&c.y==0;});require(spawn!=generated.cells.end(),"survival origin cell missing");const auto surface=scrapds::mesh_saved_overworld_cell(generated,catalog,*spawn);require(surface.size()==6144,"survival generated surface missing");

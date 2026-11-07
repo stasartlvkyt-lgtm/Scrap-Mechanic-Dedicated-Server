@@ -1,5 +1,6 @@
 #pragma once
 #include "blob.hpp"
+#include "saved_lua.hpp"
 #include "terrain.hpp"
 #include <array>
 #include <cstdint>
@@ -97,6 +98,10 @@ struct StoredBlobDataEntry {
     std::uint16_t world_id{};
     std::uint8_t flags{};
 };
+struct StoredHarvestableScriptData {
+    StoredBlobDataEntry entry;
+    SavedLuaValue value;
+};
 
 // Authoritative in-memory save state. Unknown tables/BLOB fields are retained
 // verbatim in the private SQLite database; the owner's source is never written.
@@ -145,6 +150,9 @@ public:
     // Saved ScriptData entries for managers with an independently verified
     // runtime UUID mapping (most ScriptData managers remain opaque).
     std::vector<StoredBlobDataEntry> script_data_entries(const std::array<std::uint8_t,16>& uid) const;
+    // Reads the unique ScriptData row keyed by the Harvestable's little-endian
+    // object ID and decodes its bounded saved-LUA value table.
+    std::optional<StoredHarvestableScriptData> harvestable_script_data(std::uint32_t id) const;
     std::vector<StoredBlobDataEntry> generic_data_entries() const;
     // Decoded VoxelTerrain deltas with SQLite/header identity cross-checks.
     std::vector<TerrainDelta> terrain_deltas() const;

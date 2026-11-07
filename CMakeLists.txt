@@ -55,7 +55,7 @@ scrapds_archive(lz4 lz4-1.10.0.tar.gz https://codeload.github.com/lz4/lz4/tar.gz
 FetchContent_MakeAvailable(lz4)
 add_library(scrapds_lz4 STATIC "${lz4_SOURCE_DIR}/lib/lz4.c")
 target_include_directories(scrapds_lz4 PUBLIC "${lz4_SOURCE_DIR}/lib")
-add_library(scrapds_core src/physics/simulation.cpp src/physics/world_collision.cpp src/physics/world_physics.cpp src/physics/overworld_streamer.cpp src/lua/runtime.cpp src/data/world.cpp src/data/blob.cpp src/data/state.cpp src/data/assets.cpp src/data/shape_geometry.cpp src/data/terrain.cpp src/game/commands.cpp src/game/replication.cpp src/game/player_spawn.cpp src/net/codec.cpp src/net/control.cpp src/net/world_sync.cpp src/net/game_commands.cpp src/net/character.cpp src/net/player_info.cpp src/steam/probe.cpp)
+add_library(scrapds_core src/physics/simulation.cpp src/physics/world_collision.cpp src/physics/world_physics.cpp src/physics/overworld_streamer.cpp src/lua/runtime.cpp src/data/world.cpp src/data/blob.cpp src/data/saved_lua.cpp src/data/state.cpp src/data/assets.cpp src/data/shape_geometry.cpp src/data/terrain.cpp src/game/commands.cpp src/game/replication.cpp src/game/player_spawn.cpp src/net/codec.cpp src/net/control.cpp src/net/world_sync.cpp src/net/game_commands.cpp src/net/character.cpp src/net/player_info.cpp src/steam/probe.cpp)
 target_include_directories(scrapds_core PUBLIC src PRIVATE "${bullet_SOURCE_DIR}/src")
 target_link_libraries(scrapds_core PUBLIC SQLite::SQLite3 PRIVATE BulletDynamics BulletCollision LinearMath scrapds_lua scrapds_lz4 Threads::Threads)
 if(WIN32)

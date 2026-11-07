@@ -1,6 +1,7 @@
 #include "commands.hpp"
 #include "data/shape_geometry.hpp"
 #include <algorithm>
+#include <cmath>
 #include <map>
 #include <iomanip>
 #include <sstream>
@@ -15,9 +16,48 @@ std::string joint_uuid(const Blob& data) {
     for(std::size_t i=0;i<16;++i) {if(i==4||i==6||i==8||i==10)uuid<<'-';uuid<<std::setw(2)<<unsigned(data[30-i]);}
     return uuid.str();
 }
+std::string saved_uuid_text(const std::array<std::uint8_t,16>& saved) {
+    std::ostringstream uuid;uuid<<std::hex<<std::setfill('0');
+    for(std::size_t i=0;i<saved.size();++i) {const auto byte=saved[saved.size()-1-i];if(i==4||i==6||i==8||i==10)uuid<<'-';uuid<<std::setw(2)<<unsigned(byte);}
+    return uuid.str();
+}
 }
 static CommandResult apply_game_command_impl(WorldState& world,const AssetDefinitions& assets,const net::GameCommand& command, std::uint16_t world_id,std::optional<std::uint32_t> player_container_id) {
-    if(std::holds_alternative<net::InteractHarvestableCommand>(command))return {false,"harvestable-interaction-not-implemented",{}};
+    if(const auto* interaction=std::get_if<net::InteractHarvestableCommand>(&command)) {
+        const auto mode=world.metadata().flags;
+        if(mode!=1&&mode!=14)return {false,"harvestable-interaction-requires-supported-game-mode",{}};
+        if(!player_container_id)return {false,"player-inventory-unavailable",{}};
+        const auto found=world.harvestables().find(interaction->harvestable_id);
+        if(found==world.harvestables().end())return {false,"unknown-harvestable",{}};
+        const auto& harvestable=found->second;
+        if(harvestable.world_id!=world_id)return {false,"harvestable-in-another-world",{}};
+        if(!harvestable.identity_verified||!harvestable.saved_asset_uuid)return {false,"unsupported-harvestable-layout",{}};
+        const auto* definition=assets.find_harvestable(saved_uuid_text(*harvestable.saved_asset_uuid));
+        if(!definition)return {false,"harvestable-asset-unavailable",{}};
+        if(definition->script_class!="LootHarvestable")return {false,"harvestable-script-class-not-implemented",{}};
+        try {
+            const auto state=world.harvestable_script_data(harvestable.id);
+            if(!state)return {false,"harvestable-storage-unavailable",{}};
+            const auto* item=saved_lua_field(state->value,"uuid");
+            const auto* quantity=saved_lua_field(state->value,"quantity");
+            if(!item||item->kind!=SavedLuaValue::Kind::uuid||!quantity||quantity->kind!=SavedLuaValue::Kind::number||
+               quantity->number<0||quantity->number>UINT32_MAX||std::floor(quantity->number)!=quantity->number)
+                return {false,"invalid-loot-harvestable-storage",{}};
+            const auto amount=static_cast<std::uint32_t>(quantity->number);
+            CommandResult result{true,"applied"};
+            if(amount) {
+                if(std::all_of(item->uuid.begin(),item->uuid.end(),[](auto byte){return byte==0;}))return {false,"invalid-loot-item-uuid",{}};
+                const auto* item_definition=assets.find(saved_uuid_text(item->uuid));
+                if(!item_definition||!item_definition->stack_size||!*item_definition->stack_size)
+                    return {false,"loot-item-asset-unavailable",{}};
+                for(const auto slot:world.credit_container(*player_container_id,item->uuid,amount,*item_definition->stack_size))
+                    result.changed_container_slots.push_back({*player_container_id,slot});
+            }
+            world.remove_harvestable(harvestable.id);
+            result.removed_harvestables.push_back(harvestable.id);
+            return result;
+        } catch(const std::runtime_error& error) {return {false,error.what(),{}};}
+    }
     if(std::holds_alternative<net::InteractCharacterCommand>(command))return {false,"character-interaction-not-implemented",{}};
     if(std::holds_alternative<net::CreateLiftCommand>(command))return {false,"lift-creation-not-implemented",{}};
     if(std::holds_alternative<net::RemoveLiftCommand>(command))return {false,"lift-removal-not-implemented",{}};

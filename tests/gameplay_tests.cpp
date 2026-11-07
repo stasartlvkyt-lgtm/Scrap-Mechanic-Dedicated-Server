@@ -16,7 +16,17 @@
 namespace {
 void require(bool ok,const char* reason){if(!ok)throw std::runtime_error(reason);}
 void word(scrapds::Blob& b,std::size_t at,std::uint32_t n){for(int i=0;i<4;++i)b.at(at+i)=std::uint8_t(n>>(24-8*i));}
+std::array<std::uint8_t,16> saved_uuid(std::string_view text){std::array<std::uint8_t,16> bytes{};std::size_t n=0;auto digit=[](char c)->std::uint8_t{if(c>='0'&&c<='9')return std::uint8_t(c-'0');if(c>='a'&&c<='f')return std::uint8_t(c-'a'+10);if(c>='A'&&c<='F')return std::uint8_t(c-'A'+10);throw std::runtime_error("invalid UUID digit");};for(std::size_t i=0;i<text.size();){if(text[i]=='-'){++i;continue;}if(i+1>=text.size()||n>=bytes.size())throw std::runtime_error("invalid UUID width");bytes[n++]=std::uint8_t((digit(text[i])<<4)|digit(text[i+1]));i+=2;}if(n!=bytes.size())throw std::runtime_error("invalid UUID width");std::reverse(bytes.begin(),bytes.end());return bytes;}
+struct LuaWriter {
+    scrapds::Blob bytes{'L','U','A',0,0,0,1};std::size_t bit{56};
+    void bits(std::uint64_t value,unsigned count){for(unsigned i=0;i<count;++i,++bit){if(bit/8>=bytes.size())bytes.push_back(0);if((value>>(count-1-i))&1)bytes[bit/8]|=std::uint8_t(1u<<(7-bit%8));}}
+    void string(std::string_view value){bits(4,8);bits(value.size(),32);bit=(bit+7)&~std::size_t(7);bytes.insert(bytes.end(),value.begin(),value.end());bit=bytes.size()*8;}
+    void table(std::uint32_t count){bits(5,8);bits(count,32);bits(0,1);}
+    void uuid(const std::array<std::uint8_t,16>& value){bits(100,8);bits(10001,32);for(const auto byte:value)bits(byte,8);}
+    void integer8(std::uint8_t value){bits(8,8);bits(value,8);}
+};
 void scalar(scrapds::Blob& b,std::size_t at,float n){word(b,at,std::bit_cast<std::uint32_t>(n));}
+scrapds::Blob harvestable(){scrapds::Blob b(72);b[0]=5;b[2]=1;word(b,3,13);b[7]=3;word(b,8,12);word(b,12,34);b[17]=0;const auto uuid=saved_uuid("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee");std::copy(uuid.begin(),uuid.end(),b.begin()+20);return b;}
 void sql(sqlite3* db,const char* q){char* e=nullptr;if(sqlite3_exec(db,q,nullptr,nullptr,&e)!=SQLITE_OK){std::string m=e?e:"sqlite";sqlite3_free(e);throw std::runtime_error(m);}}
 void insert(sqlite3* db,const char* q,const scrapds::Blob& b){sqlite3_stmt* s=nullptr;require(sqlite3_prepare_v2(db,q,-1,&s,nullptr)==SQLITE_OK,"fixture prepare");sqlite3_bind_blob64(s,1,b.data(),b.size(),SQLITE_TRANSIENT);const int code=sqlite3_step(s);sqlite3_finalize(s);require(code==SQLITE_DONE,"fixture insert");}
 struct Temp { std::filesystem::path p=std::filesystem::temp_directory_path()/("scrapds-gameplay-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));Temp(){std::filesystem::create_directory(p);}~Temp(){std::error_code ec;std::filesystem::remove_all(p,ec);}};
@@ -31,7 +41,7 @@ int main(int argc,char** argv){try{
     Temp temp;
     const auto definitions=temp.p/"Data/Objects/Database/ShapeSets";std::filesystem::create_directories(definitions);
     {std::ofstream file(definitions/"blocks.shapeset");file<<R"({"blockList":[{"uuid":"00000000-0000-0000-0000-000000000000","color":"112233","name":"test","physicsMaterial":"Wood"},{"uuid":"a6c6ce30-dd47-4587-b475-085d55c6a3b4","color":"9b683a","name":"wood","physicsMaterial":"Wood","stackSize":20}]})";}
-    {std::ofstream file(definitions/"parts.shapeset");file<<R"({"partList":[{"uuid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","color":"ffffff","name":"unsupported part","stackSize":5}]})";}
+    {std::ofstream file(definitions/"parts.shapeset");file<<R"({"partList":[{"uuid":"aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","color":"ffffff","name":"unsupported part","stackSize":5},{"uuid":"8d3b98de-c981-4f05-abfe-d22ee4781d33","color":"ffffff","name":"loot item","stackSize":10}]})";}
     const auto character_definitions=temp.p/"Survival/Character/CharacterSets";std::filesystem::create_directories(character_definitions);
     {std::ofstream file(character_definitions/"test.json");file<<R"({// JSON5 comments and trailing commas occur in game character sets.
         "characters":[
@@ -40,10 +50,10 @@ int main(int argc,char** argv){try{
         ],
     })";}
     const auto harvestable_definitions=temp.p/"Survival/Harvestables/Database/HarvestableSets";std::filesystem::create_directories(harvestable_definitions);
-    {std::ofstream file(harvestable_definitions/"test.harvestableset");file<<R"({"harvestableList":[{"uuid":"dddddddd-dddd-dddd-dddd-dddddddddddd","name":"test harvestable","script":{"class":"GenericDropHarvestable","file":"$SURVIVAL_DATA/Scripts/game/harvestable/GenericDropHarvestable.lua","data":{"genericDropHarvestable":{"lootSource":"loot_source_test","reactToInteraction":true}}}}]})";}
-    auto assets=scrapds::AssetDefinitions::load(temp.p);require(assets.size()==3,"asset definition not loaded");
+    {std::ofstream file(harvestable_definitions/"test.harvestableset");file<<R"({"harvestableList":[{"uuid":"dddddddd-dddd-dddd-dddd-dddddddddddd","name":"test harvestable","script":{"class":"GenericDropHarvestable","file":"$SURVIVAL_DATA/Scripts/game/harvestable/GenericDropHarvestable.lua","data":{"genericDropHarvestable":{"lootSource":"loot_source_test","reactToInteraction":true}}}},{"uuid":"eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee","name":"stored loot","script":{"class":"LootHarvestable","file":"$SURVIVAL_DATA/Scripts/game/harvestable/LootHarvestable.lua"}}]})";}
+    auto assets=scrapds::AssetDefinitions::load(temp.p);require(assets.size()==4,"asset definition not loaded");
     const auto* harvestable_asset=assets.find_harvestable("dddddddd-dddd-dddd-dddd-dddddddddddd");
-    require(assets.harvestable_size()==1&&harvestable_asset&&harvestable_asset->script_class=="GenericDropHarvestable"&&harvestable_asset->loot_source=="loot_source_test"&&harvestable_asset->react_to_interaction==true,"Harvestable script/config definition not loaded");
+    require(assets.harvestable_size()==2&&harvestable_asset&&harvestable_asset->script_class=="GenericDropHarvestable"&&harvestable_asset->loot_source=="loot_source_test"&&harvestable_asset->react_to_interaction==true&&assets.find_harvestable("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")->script_class=="LootHarvestable","Harvestable script/config definition not loaded");
     require(assets.find("00000000-0000-0000-0000-000000000000")->default_color_abgr==0xff332211,"default color channel order");
     const auto* paintable_character=assets.find_character("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
     require(paintable_character&&paintable_character->paint_enabled==true&&paintable_character->default_paint_color_rgba==0xffff5c03,"Character paint definition was not decoded");
@@ -56,11 +66,18 @@ int main(int argc,char** argv){try{
         require(installed_harvestable_assets>=200,"installed Harvestable asset catalog is unexpectedly incomplete");
     }
     sqlite3* db=nullptr;const auto source=temp.p/"source.db";require(sqlite3_open(source.string().c_str(),&db)==SQLITE_OK,"fixture open");
-    sql(db,"CREATE TABLE Game(savegameversion INTEGER,flags INTEGER,seed INTEGER,gametick INTEGER,uniqueIds BLOB);INSERT INTO Game VALUES(30,1,2,3,NULL);CREATE TABLE RigidBody(id INTEGER PRIMARY KEY,worldId INTEGER,data BLOB);CREATE TABLE ChildShape(id INTEGER PRIMARY KEY,bodyId INTEGER,data BLOB);CREATE TABLE Joint(id INTEGER PRIMARY KEY,childShapeIdA INTEGER,childShapeIdB INTEGER,data BLOB);CREATE VIRTUAL TABLE RigidBodyBounds USING rtree(id,minX,maxX,minY,maxY);INSERT INTO RigidBodyBounds VALUES(7,-20,20,-20,20)");
+    sql(db,"CREATE TABLE Game(savegameversion INTEGER,flags INTEGER,seed INTEGER,gametick INTEGER,uniqueIds BLOB);INSERT INTO Game VALUES(30,1,2,3,NULL);CREATE TABLE RigidBody(id INTEGER PRIMARY KEY,worldId INTEGER,data BLOB);CREATE TABLE ChildShape(id INTEGER PRIMARY KEY,bodyId INTEGER,data BLOB);CREATE TABLE Joint(id INTEGER PRIMARY KEY,childShapeIdA INTEGER,childShapeIdB INTEGER,data BLOB);CREATE TABLE Harvestable(id INTEGER PRIMARY KEY,worldId INTEGER,x INTEGER,y INTEGER,size INTEGER,data BLOB);CREATE TABLE ScriptData(uid BLOB,key BLOB,worldId INTEGER,flags INTEGER,data BLOB);CREATE VIRTUAL TABLE RigidBodyBounds USING rtree(id,minX,maxX,minY,maxY);INSERT INTO RigidBodyBounds VALUES(7,-20,20,-20,20)");
     scrapds::Blob counters(72);word(counters,0,17);for(std::size_t i=1;i<=17;++i)word(counters,i*4,1000+std::uint32_t(i));word(counters,4,100);word(counters,12,200);insert(db,"UPDATE Game SET uniqueIds=?1",counters);
     scrapds::Blob body(60);body[1]=1;body[2]=1;word(body,3,7);scalar(body,9,20);scalar(body,13,-20);scalar(body,17,20);scalar(body,21,-20);scalar(body,27,1);insert(db,"INSERT INTO RigidBody VALUES(7,0,?1)",body);
     scrapds::Blob shape(48);shape[0]=1;shape[1]=31;shape[2]=1;word(shape,3,11);word(shape,7,7);word(shape,27,7);word(shape,37,0xff000000);shape[42]=2;shape[44]=2;shape[46]=2;insert(db,"INSERT INTO ChildShape VALUES(11,7,?1)",shape);
-    scrapds::Blob joint(69);joint[0]=2;joint[1]=41;joint[2]=1;word(joint,3,5);word(joint,7,11);word(joint,11,11);joint[65]=0xff;joint[66]=0x01;joint[67]=0x7f;joint[68]=0xdf;insert(db,"INSERT INTO Joint VALUES(5,11,11,?1)",joint);sqlite3_close(db);
+    scrapds::Blob joint(69);joint[0]=2;joint[1]=41;joint[2]=1;word(joint,3,5);word(joint,7,11);word(joint,11,11);joint[65]=0xff;joint[66]=0x01;joint[67]=0x7f;joint[68]=0xdf;insert(db,"INSERT INTO Joint VALUES(5,11,11,?1)",joint);
+    insert(db,"INSERT INTO Harvestable VALUES(13,0,34,12,3,?1)",harvestable());
+    scrapds::net::BlobDataEntry stored_loot;stored_loot.uid=saved_uuid("12121212-3434-5656-7878-909090909090");stored_loot.key={13,0,0,0};stored_loot.flags=3;
+    LuaWriter lua;lua.table(2);lua.string("uuid");lua.uuid(saved_uuid("8d3b98de-c981-4f05-abfe-d22ee4781d33"));lua.string("quantity");lua.integer8(3);stored_loot.payload=std::move(lua.bytes);
+    const auto saved_loot=scrapds::net::make_saved_blob_data(stored_loot);
+    sqlite3_stmt* loot_statement=nullptr;require(sqlite3_prepare_v2(db,"INSERT INTO ScriptData VALUES(?1,?2,0,3,?3)",-1,&loot_statement,nullptr)==SQLITE_OK,"loot ScriptData prepare");
+    sqlite3_bind_blob(loot_statement,1,stored_loot.uid.data(),16,SQLITE_TRANSIENT);sqlite3_bind_blob(loot_statement,2,stored_loot.key.data(),4,SQLITE_TRANSIENT);sqlite3_bind_blob64(loot_statement,3,saved_loot.data(),saved_loot.size(),SQLITE_TRANSIENT);
+    const auto loot_status=sqlite3_step(loot_statement);sqlite3_finalize(loot_statement);require(loot_status==SQLITE_DONE,"loot ScriptData insert");sqlite3_close(db);
     auto world=scrapds::WorldState::load(source);
     auto temporary_shape=shape;word(temporary_shape,37,0xff998877);
     require(!world.atomic([&]{world.replace_shape_blob(11,temporary_shape);return false;}),"rejected compound command committed");
@@ -84,7 +101,7 @@ int main(int argc,char** argv){try{
     require(result.applied&&result.changed_shapes==std::vector<std::uint32_t>{11},"direct paint did not apply");
     require(scrapds::decode_child_geometry(world.shapes().at(11).data)->color_abgr==0xffabcdef,"paint color not persisted in native state");
     result=scrapds::apply_game_command(world,assets,scrapds::net::InteractHarvestableCommand{123});
-    require(!result.applied&&result.reason=="harvestable-interaction-not-implemented","unsupported Harvestable interaction was accepted");
+    require(!result.applied&&result.reason=="player-inventory-unavailable","Harvestable interaction without a Survival inventory was accepted");
     result=scrapds::apply_game_command(world,assets,scrapds::net::InteractCharacterCommand{456});
     require(!result.applied&&result.reason=="character-interaction-not-implemented","unsupported Character interaction was accepted");
     result=scrapds::apply_game_command(world,assets,scrapds::net::CreateLiftCommand{});
@@ -121,6 +138,28 @@ int main(int argc,char** argv){try{
     insert(db,"UPDATE Joint SET data=?1 WHERE id=5",survival_joint);sqlite3_close(db);
     auto survival=scrapds::WorldState::load(survival_path);
     const auto container=survival.ensure_player_inventory_container(76561198000000001ull);
+    const auto pickup_path=temp.p/"pickup-survival.db";std::filesystem::copy_file(source,pickup_path);
+    require(sqlite3_open(pickup_path.string().c_str(),&db)==SQLITE_OK,"pickup Survival fixture open");sql(db,"UPDATE Game SET flags=14");sqlite3_close(db);
+    auto pickup_world=scrapds::WorldState::load(pickup_path);
+    const auto pickup_container=pickup_world.ensure_player_inventory_container(76561198000000002ull);
+    const auto pickup=scrapds::apply_replicated_command(pickup_world,assets,scrapds::net::InteractHarvestableCommand{13},17,{},0,pickup_container);
+    if(!pickup.command.applied)throw std::runtime_error("LootHarvestable pickup rejected: "+pickup.command.reason);
+    require(pickup.command.changed_container_slots.size()==1&&pickup.command.removed_harvestables==std::vector<std::uint32_t>{13},"LootHarvestable pickup did not atomically grant its stored item and remove the object");
+    const auto pickup_slot=pickup.command.changed_container_slots.front().slot;
+    const auto loot_item=saved_uuid("8d3b98de-c981-4f05-abfe-d22ee4781d33");
+    require(pickup_world.container_slot_quantity(pickup_container,pickup_slot,loot_item)==3&&!pickup_world.harvestables().contains(13)&&pickup_world.table_counts().at("ScriptData")==0,"LootHarvestable pickup state was not committed");
+    const auto pickup_update=scrapds::net::parse_net_object_packet(pickup.response);
+    require(pickup_update.records.size()==2&&pickup_update.records[0].operation==2&&pickup_update.records[0].type==5&&pickup_update.records[0].id==13&&pickup_update.records[1].operation==3&&pickup_update.records[1].type==4,"LootHarvestable pickup response omitted object removal or inventory slot state");
+    auto blocked_pickup_world=scrapds::WorldState::load(pickup_path);
+    const auto blocked_container=blocked_pickup_world.ensure_player_inventory_container(76561198000000003ull);
+    const auto filler_item=saved_uuid("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    const auto filler_stack=assets.find("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")->stack_size.value();
+    const auto& blocked_inventory=blocked_pickup_world.containers().at(blocked_container);
+    const auto empty_slots=std::count_if(blocked_inventory.serialized_entries.begin(),blocked_inventory.serialized_entries.end(),[](const auto& entry){return entry[0]==0xff&&entry[1]==0xff&&std::all_of(entry.begin()+2,entry.begin()+18,[](auto byte){return byte==0;});});
+    const auto filler_capacity=std::uint64_t(empty_slots)*filler_stack;
+    blocked_pickup_world.credit_container(blocked_container,filler_item,std::uint32_t(filler_capacity),filler_stack);
+    const auto blocked_pickup=scrapds::apply_replicated_command(blocked_pickup_world,assets,scrapds::net::InteractHarvestableCommand{13},18,{},0,blocked_container);
+    require(!blocked_pickup.command.applied&&blocked_pickup.command.reason=="container-insufficient-space"&&blocked_pickup.response.empty()&&blocked_pickup_world.harvestables().contains(13)&&blocked_pickup_world.table_counts().at("ScriptData")==1,"full inventory consumed LootHarvestable or its saved storage");
     auto survival_build=std::get<scrapds::net::BuildShapeCommand>(command);survival_build.inventory_slot=0;
     std::array<std::uint8_t,16> item{};std::reverse_copy(survival_build.shape_uuid.begin(),survival_build.shape_uuid.end(),item.begin());
     require(assets.find("a6c6ce30-dd47-4587-b475-085d55c6a3b4")->stack_size==20,"asset stack size missing");
