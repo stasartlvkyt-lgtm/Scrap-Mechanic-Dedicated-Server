@@ -299,6 +299,38 @@ NetObjectRecord make_joint_state(std::span<const std::uint8_t> blob, std::uint16
     if (blob[1] != 3 && blob[1] != 4 && blob[1] != 28 && blob[1] != 41) throw std::runtime_error("unsupported Joint save variant");
     return state_record(blob, 2, index, 31);
 }
+namespace {
+void check_harvestable(const scrapds::StoredHarvestable& harvestable) {
+    const auto blob = std::span<const std::uint8_t>(harvestable.data);
+    if (!harvestable.identity_verified || blob.size() != 72 || blob[0] != 5 || blob[1] != 0 || blob[2] != 1 ||
+        read32(blob, 3) != harvestable.id || blob[7] != harvestable.size ||
+        read32(blob, 8) != static_cast<std::uint32_t>(harvestable.y) ||
+        read32(blob, 12) != static_cast<std::uint32_t>(harvestable.x) ||
+        std::uint16_t((blob[16] << 8) | blob[17]) != harvestable.world_id || !harvestable.saved_asset_uuid ||
+        !std::equal(harvestable.saved_asset_uuid->begin(), harvestable.saved_asset_uuid->end(), blob.begin() + 20))
+        throw std::runtime_error("unsupported or unverified static Harvestable save state");
+}
+}
+NetObjectRecord make_harvestable_creation(const scrapds::StoredHarvestable& harvestable) {
+    check_harvestable(harvestable);
+    NetObjectRecord result;
+    result.operation = 1; result.type = 5; result.subtype = harvestable.data[1]; result.id = harvestable.id;
+    return result;
+}
+NetObjectRecord make_harvestable_state(const scrapds::StoredHarvestable& harvestable, std::uint16_t index) {
+    check_harvestable(harvestable);
+    const auto& blob = harvestable.data;
+    NetObjectRecord result;
+    result.operation = 3; result.type = 5; result.id = harvestable.id;
+    // Static Harvestables are constructed with transient state byte +200 = 0.
+    // The remaining fields match the native save reader: flags, asset index,
+    // transform, two packed words, and color.
+    result.payload.insert(result.payload.end(), blob.begin() + 18, blob.begin() + 20);
+    result.payload.push_back(std::uint8_t(index >> 8)); result.payload.push_back(std::uint8_t(index));
+    result.payload.push_back(0);
+    result.payload.insert(result.payload.end(), blob.begin() + 36, blob.end());
+    return result;
+}
 NetObjectRecord make_character_creation(std::uint32_t id,const CharacterCreation& character) {
     if(!id||id==UINT32_MAX)throw std::invalid_argument("invalid-character-id");
     NetObjectRecord result;result.operation=1;result.type=6;result.subtype=0;result.id=id;
@@ -355,7 +387,7 @@ void merge_asset_catalog(InitialAssetCatalog& target,const InitialAssetCatalog& 
             destination.emplace(uuid,index);by_index.emplace(index,uuid);
         }
     };
-    merge(merged.shapes,incoming.shapes);merge(merged.joints,incoming.joints);
+    merge(merged.shapes,incoming.shapes);merge(merged.joints,incoming.joints);merge(merged.harvestables,incoming.harvestables);
     target=std::move(merged);
 }
 static void validate_catalog_hash(std::string_view hash) {
@@ -365,9 +397,9 @@ static void validate_catalog_hash(std::string_view hash) {
 std::vector<std::uint8_t> serialize_asset_catalog(const InitialAssetCatalog& catalog,std::string_view hash) {
     validate_catalog_hash(hash);
     InitialAssetCatalog checked;merge_asset_catalog(checked,catalog);
-    std::vector<std::uint8_t> result{'S','D','S','C','A','T','1',0};
+    std::vector<std::uint8_t> result{'S','D','S','C','A','T','2',0};
     result.insert(result.end(),hash.begin(),hash.end());
-    for(const auto* entries:{&checked.shapes,&checked.joints}) {
+    for(const auto* entries:{&checked.shapes,&checked.joints,&checked.harvestables}) {
         if(entries->size()>65536)throw std::runtime_error("asset catalog too large");
         put32(result,static_cast<std::uint32_t>(entries->size()));
         for(const auto& [uuid,index]:*entries) {append(result,uuid);result.push_back(std::uint8_t(index>>8));result.push_back(std::uint8_t(index));}
@@ -377,12 +409,16 @@ std::vector<std::uint8_t> serialize_asset_catalog(const InitialAssetCatalog& cat
 InitialAssetCatalog parse_asset_catalog(std::span<const std::uint8_t> bytes,std::string_view hash) {
     validate_catalog_hash(hash);std::size_t offset=0;
     const auto magic=take(bytes,offset,8);
-    constexpr std::array<std::uint8_t,8> expected{'S','D','S','C','A','T','1',0};
-    if(!std::equal(magic.begin(),magic.end(),expected.begin()))throw std::runtime_error("invalid asset catalog header");
+    constexpr std::array<std::uint8_t,8> v1{'S','D','S','C','A','T','1',0};
+    constexpr std::array<std::uint8_t,8> v2{'S','D','S','C','A','T','2',0};
+    const bool has_harvestables=std::equal(magic.begin(),magic.end(),v2.begin());
+    if(!has_harvestables&&!std::equal(magic.begin(),magic.end(),v1.begin()))throw std::runtime_error("invalid asset catalog header");
     const auto stored_hash=take(bytes,offset,64);
     if(!std::equal(stored_hash.begin(),stored_hash.end(),hash.begin()))throw std::runtime_error("asset catalog belongs to another bootstrap");
     InitialAssetCatalog result;
-    for(auto* entries:{&result.shapes,&result.joints}) {
+    std::vector<std::map<InitialAssetCatalog::SavedUuid,std::uint16_t>*> sections{&result.shapes,&result.joints};
+    if(has_harvestables)sections.push_back(&result.harvestables);
+    for(auto* entries:sections) {
         const auto count=read32(bytes,offset);offset+=4;
         if(count>65536||count>(bytes.size()-offset)/18)throw std::runtime_error("invalid asset catalog entry count");
         for(std::uint32_t i=0;i<count;++i) {
@@ -398,17 +434,21 @@ InitialAssetCatalog infer_initial_asset_catalog(const NetObjectPacket& captured,
     if (captured.message_id != 21) throw std::runtime_error("native initial-world bootstrap requires NetObj ID21");
     InitialAssetCatalog result;
     for (const auto& record : captured.records) {
-        if (record.operation != 3 || (record.type != 1 && record.type != 2)) continue;
+        if (record.operation != 3 || (record.type != 1 && record.type != 2 && record.type != 5)) continue;
+        if(record.type==5&&record.payload.size()!=41)throw std::runtime_error("unsupported Harvestable initial-state layout");
         if (record.payload.size() < 2) throw std::runtime_error("initial state has no asset catalog index");
-        const auto index = std::uint16_t((record.payload[0] << 8) | record.payload[1]);
-        auto& catalog = record.type == 1 ? result.shapes : result.joints;
+        const std::size_t index_offset=record.type==5?2:0;
+        if(record.payload.size()<index_offset+2)throw std::runtime_error("initial state has no asset catalog index");
+        const auto index = std::uint16_t((record.payload[index_offset] << 8) | record.payload[index_offset+1]);
+        auto& catalog = record.type == 1 ? result.shapes : record.type==2 ? result.joints : result.harvestables;
         const Blob* blob=nullptr;
         if(record.type==1) { const auto it=world.shapes().find(record.id); if(it!=world.shapes().end())blob=&it->second.data; }
-        else { const auto it=world.joints().find(record.id); if(it!=world.joints().end())blob=&it->second.data; }
+        else if(record.type==2) { const auto it=world.joints().find(record.id); if(it!=world.joints().end())blob=&it->second.data; }
+        else { const auto it=world.harvestables().find(record.id); if(it!=world.harvestables().end()&&it->second.saved_asset_uuid)blob=&it->second.data; }
         // A checkpoint may no longer contain entities from the replay
         // template. Surviving entities still establish their catalog entries.
         if(!blob)continue;
-        const auto key = saved_uuid(*blob, record.type == 1 ? 11 : 15);
+        const auto key = record.type==5 ? *world.harvestables().at(record.id).saved_asset_uuid : saved_uuid(*blob, record.type == 1 ? 11 : 15);
         const auto [position, inserted] = catalog.emplace(key, index);
         if (!inserted && position->second != index) throw std::runtime_error("conflicting asset catalog indices");
     }
@@ -421,12 +461,13 @@ NativeInitialWorld rebuild_initial_world(const NetObjectPacket& captured, const 
     if (captured.message_id != 21) throw std::runtime_error("native initial-world bootstrap requires NetObj ID21");
     const auto& shape_catalog = catalog.shapes;
     const auto& joint_catalog = catalog.joints;
-    std::set<std::uint32_t> body_ids, shape_ids, joint_ids;
+    std::set<std::uint32_t> body_ids, shape_ids, joint_ids, harvestable_ids;
     for (const auto& record : captured.records) {
         if (record.operation == 1) {
             if (record.type == 0) body_ids.insert(record.id);
             else if (record.type == 1) shape_ids.insert(record.id);
             else if (record.type == 2) joint_ids.insert(record.id);
+            else if (record.type == 5) harvestable_ids.insert(record.id);
         }
     }
     auto equal_ids = [](const auto& ids, const auto& entities) {
@@ -434,7 +475,7 @@ NativeInitialWorld rebuild_initial_world(const NetObjectPacket& captured, const 
         for (const auto& [id, entity] : entities) if (!ids.contains(id)) return false;
         return true;
     };
-    if (!equal_ids(body_ids, world.bodies()) || !equal_ids(shape_ids, world.shapes()) || !equal_ids(joint_ids, world.joints())) throw std::runtime_error("bootstrap entity identities differ from the loaded save");
+    if (!equal_ids(body_ids, world.bodies()) || !equal_ids(shape_ids, world.shapes()) || !equal_ids(joint_ids, world.joints()) || !equal_ids(harvestable_ids, world.harvestables())) throw std::runtime_error("bootstrap entity identities differ from the loaded save");
     NativeInitialWorld result;
     result.packet = captured;
     result.packet.tick = tick;
@@ -450,6 +491,16 @@ NativeInitialWorld rebuild_initial_world(const NetObjectPacket& captured, const 
             const auto& blob = world.joints().at(record.id).data;
             record = make_joint_state(blob, joint_catalog.at(saved_uuid(blob, 15)));
             ++result.native_joint_states;
+        } else if(record.type==5&&record.operation==1) {
+            record=make_harvestable_creation(world.harvestables().at(record.id));
+            ++result.native_harvestable_creations;
+        } else if(record.type==5&&record.operation==3) {
+            const auto& harvestable=world.harvestables().at(record.id);
+            if(!harvestable.saved_asset_uuid)throw std::runtime_error("Harvestable has no verified asset UUID");
+            const auto index=catalog.harvestables.find(*harvestable.saved_asset_uuid);
+            if(index==catalog.harvestables.end())throw std::runtime_error("Harvestable UUID has no established asset catalog index");
+            record=make_harvestable_state(harvestable,index->second);
+            ++result.native_harvestable_states;
         } else if (record.type == 0 && record.operation == 3) {
             const auto& blob = world.bodies().at(record.id).data;
             if (blob.size() == 60 && blob[1] == 1) {
@@ -462,15 +513,16 @@ NativeInitialWorld rebuild_initial_world(const NetObjectPacket& captured, const 
 }
 NativeInitialWorld rebuild_live_initial_world(const NetObjectPacket& captured, const scrapds::WorldState& world, std::uint32_t tick, const InitialAssetCatalog& catalog) {
     if (captured.message_id != 21) throw std::runtime_error("live initial-world bootstrap requires NetObj ID21");
-    std::set<std::uint32_t> bodies, shapes, joints, containers;
+    std::set<std::uint32_t> bodies, shapes, joints, harvestables, containers;
     for (const auto& record : captured.records) {
         if (record.operation != 1) continue;
         if (record.type == 0) bodies.insert(record.id);
         else if (record.type == 1) shapes.insert(record.id);
         else if (record.type == 2) joints.insert(record.id);
+        else if (record.type == 5) harvestables.insert(record.id);
         else if (record.type == 4) containers.insert(record.id);
     }
-    std::vector<NetObjectRecord> body_creates, shape_creates, shape_states, body_states, joint_creates, joint_states, container_creates;
+    std::vector<NetObjectRecord> body_creates, shape_creates, shape_states, body_states, joint_creates, joint_states, harvestable_creates, harvestable_states, container_creates;
     NetObjectPacket expanded = captured;
     // The replay packet is a layout/catalog template. Drop stale world objects
     // from it so deletes and replacement saves don't resurrect captured data.
@@ -480,6 +532,7 @@ NativeInitialWorld rebuild_live_initial_world(const NetObjectPacket& captured, c
         if(record.type==0)return !world.bodies().contains(record.id);
         if(record.type==1)return !world.shapes().contains(record.id);
         if(record.type==2)return !world.joints().contains(record.id);
+        if(record.type==5)return !world.harvestables().contains(record.id);
         if(record.type==4)return !world.container_ids().contains(record.id);
         return false;
     });
@@ -525,6 +578,14 @@ NativeInitialWorld rebuild_live_initial_world(const NetObjectPacket& captured, c
         joint_creates.push_back(std::move(creation));
         joint_states.push_back(make_joint_state(joint.data,index->second));
     }
+    for(const auto& [id,harvestable]:world.harvestables()) {
+        if(harvestables.contains(id))continue;
+        if(!harvestable.saved_asset_uuid)throw std::runtime_error("new Harvestable has no verified asset UUID");
+        const auto index=catalog.harvestables.find(*harvestable.saved_asset_uuid);
+        if(index==catalog.harvestables.end())throw std::runtime_error("new Harvestable UUID has no established asset catalog index");
+        harvestable_creates.push_back(make_harvestable_creation(harvestable));
+        harvestable_states.push_back(make_harvestable_state(harvestable,index->second));
+    }
     // Preserve the original object's dependency ordering: all body creates,
     // all shape creates, all shape states, all body states, then joints.
     auto insert_group = [&](std::uint8_t operation, std::uint8_t type, std::vector<NetObjectRecord>& added) {
@@ -543,9 +604,11 @@ NativeInitialWorld rebuild_live_initial_world(const NetObjectPacket& captured, c
                 if (record.operation == 3 && record.type == 1) return 2;
                 if (record.operation == 3 && record.type == 0) return 3;
                 if (record.type == 2) return 4;
+                if (record.operation == 1 && record.type == 5) return 5;
+                if (record.operation == 3 && record.type == 5) return 6;
                 return -1;
             };
-            const int target = operation == 1 ? (type == 0 ? 0 : 1) : (type == 1 ? 2 : 3);
+            const int target = operation == 1 ? (type == 0 ? 0 : type == 1 ? 1 : type == 5 ? 5 : 4) : (type == 1 ? 2 : type == 0 ? 3 : type == 5 ? 6 : 4);
             position = std::find_if(expanded.records.begin(), expanded.records.end(), [&](const auto& record) { return rank(record) > target; });
         }
         expanded.records.insert(position, std::make_move_iterator(added.begin()), std::make_move_iterator(added.end()));
@@ -556,6 +619,8 @@ NativeInitialWorld rebuild_live_initial_world(const NetObjectPacket& captured, c
     insert_group(3, 0, body_states);
     insert_group(1, 2, joint_creates);
     insert_group(3, 2, joint_states);
+    insert_group(1, 5, harvestable_creates);
+    insert_group(3, 5, harvestable_states);
     insert_group(1, 4, container_creates);
     return rebuild_initial_world(expanded, world, tick, catalog);
 }

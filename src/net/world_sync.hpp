@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 
-namespace scrapds { class WorldState; struct StoredContainer; }
+namespace scrapds { class WorldState; struct StoredContainer; struct StoredHarvestable; }
 
 namespace scrapds::net {
 struct CharacterCreation;
@@ -56,6 +56,8 @@ std::vector<std::uint8_t> make_net_object_packet(const NetObjectPacket& packet, 
 NetObjectRecord make_body_creation(std::span<const std::uint8_t> saved_blob);
 NetObjectRecord make_child_shape_state(std::span<const std::uint8_t> saved_blob, std::uint16_t asset_index);
 NetObjectRecord make_joint_state(std::span<const std::uint8_t> saved_blob, std::uint16_t asset_index);
+NetObjectRecord make_harvestable_creation(const scrapds::StoredHarvestable& harvestable);
+NetObjectRecord make_harvestable_state(const scrapds::StoredHarvestable& harvestable, std::uint16_t asset_index);
 NetObjectRecord make_character_creation(std::uint32_t id, const CharacterCreation& character);
 NetObjectRecord make_character_state(std::uint32_t id, const CharacterInitialState& character);
 NetObjectRecord make_container_creation(const scrapds::StoredContainer& container);
@@ -63,11 +65,12 @@ NetObjectRecord make_container_slot_state(const scrapds::StoredContainer& contai
 struct NativeInitialWorld {
     NetObjectPacket packet;
     std::size_t native_body_creations{}, native_shape_states{}, native_joint_states{};
+    std::size_t native_harvestable_creations{}, native_harvestable_states{};
     std::size_t native_static_body_states{}, preserved_dynamic_body_states{}, preserved_records{};
 };
 struct InitialAssetCatalog {
     using SavedUuid = std::array<std::uint8_t, 16>;
-    std::map<SavedUuid, std::uint16_t> shapes, joints;
+    std::map<SavedUuid, std::uint16_t> shapes, joints, harvestables;
 };
 // Call once against the unchanged source save, before any UUID mutations.
 InitialAssetCatalog infer_initial_asset_catalog(const NetObjectPacket& captured, const scrapds::WorldState& initial_world);
@@ -77,8 +80,8 @@ InitialAssetCatalog parse_asset_catalog(std::span<const std::uint8_t> bytes, std
 void merge_asset_catalog(InitialAssetCatalog& target, const InitialAssetCatalog& incoming);
 // Hybrid bootstrap: regenerate verified entity payloads from the loaded save,
 // retaining unsupported runtime metadata/Lua/terrain records explicitly. The
-// source save must have exactly the captured body/shape/joint identity sets.
-// Asset UUID->index mapping is inferred from matching captured initial states.
+// source save must have exactly the captured body/shape/joint/Harvestable identity sets.
+// Asset UUID->index mappings are inferred from matching captured initial states.
 // This is not a complete standalone initial-world serializer.
 NativeInitialWorld rebuild_initial_world(const NetObjectPacket& captured, const scrapds::WorldState& world, std::uint32_t tick);
 NativeInitialWorld rebuild_initial_world(const NetObjectPacket& captured, const scrapds::WorldState& world, std::uint32_t tick, const InitialAssetCatalog& catalog);

@@ -1,5 +1,11 @@
 # Implementation status — 2026-11-02
 
+## Harvestable NetObj bootstrap serialization (2026-11-07)
+
+- Added type-5 create/state reconstruction for identity-verified 72-byte static Harvestable saves. The state includes saved flags/transform/packed fields/color and a domain-2 UUID index; the constructor-default transient byte is emitted as zero. Identity and UUID bytes are revalidated before serialization.
+- Extended the initial asset catalog with Harvestable mappings. Writer emits SDSCAT2; parser remains compatible with SDSCAT1. Initial and live world rebuilds update captured Harvestables and can insert newly saved static Harvestables as create then state, when the captured domain-2 catalog already establishes that UUID.
+- Synthetic SQLite fixture checks catalog persistence/legacy parsing, packet roundtrip, live insertion order and invalid UUID rejection. Build succeeded; all 20 CTest passed. Read-only Survival audit matched 124,402 UUIDs to 208 installed definitions, but no real Survival network packet was available to verify domain-2 index assignment or byte parity. Lua ScriptData, `0x28` harvesting, loot, and complete Survival boot remain outstanding.
+
 ## Runtime milestone — real client control handshake (2026-11-02)
 
 - `scrapds listen-probe ... --handshake` now sends the pre-game control

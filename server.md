@@ -2238,6 +2238,32 @@ Harvestable из offset 20, сохраняя 16 байт в сетевом/со�
 На реальном Survival-сейве сопоставились 124 402 UUID и все нашлись в каталоге
 из 208 установленных ассетов; неизвестных UUID нет. 49 строк не проходят
 распознавание identity и намеренно не участвуют в сопоставлении. CTest: 20/20.
-Это закрывает связь сейв→asset definition, но сетевые type-5 create/state,
-ScriptData для конкретного объекта, Survival bootstrap и команда сбора всё ещё
-не реализованы.
+Это закрывает связь сейв→asset definition. Сетевые type-5 create/state и
+интеграция сохранённых объектов в bootstrap описаны в следующем разделе;
+ScriptData для конкретного объекта и команда сбора всё ещё не реализованы.
+
+## 25. Harvestable type 5 в initial-world bootstrap (2026-11-07)
+
+Добавлены type-5 create и state сериализаторы для подтверждённого static
+Harvestable BLOB длиной 72 байта. Перед отправкой повторно сверяются SQLite ID,
+world, координаты, size и UUID; неизвестный subtype, неподтверждённая запись
+или несовпавший UUID отклоняются. State формируется из сохранённых flags,
+сетевого asset index, transform, packed words и цвета; transient byte берётся
+из значения, установленного конструктором static Harvestable. Формат state
+восстановлен по native reader/writer; живой Survival-пакет для побайтного
+сравнения пока не захвачен.
+
+`InitialAssetCatalog` теперь хранит UUID→index Harvestable отдельно от
+каталогов блоков и joints. Формат снимка обновлён до SDSCAT2; reader по-прежнему
+принимает SDSCAT1, сохраняя прежние shape/joint mappings. `infer_initial_asset_catalog`
+восстанавливает индекс из state type 5, а `rebuild_initial_world` и live-вариант
+пересобирают существующие объекты и добавляют новые static записи в bootstrap с
+порядком create перед state. Dynamic/неизвестные варианты остаются ошибкой.
+
+Fixture проходит SQLite load → catalog inference/persistence → initial packet
+rebuild, проверяет новый объект, отказ при повреждённом UUID и чтение legacy
+каталога. Сборка и CTest: 20/20. Реальный save audit по-прежнему сопоставляет
+124 402 UUID с 208 установленными Harvestable assets. Это ещё не доказывает
+совпадение сетевого индекса с настоящим Survival-сеансом: порядок домена 2
+нужно подтвердить захватом, а загрузка Lua ScriptData и команда взаимодействия
+`0x28` не реализованы. Поэтому полноценная Survival-сессия пока не готова.
