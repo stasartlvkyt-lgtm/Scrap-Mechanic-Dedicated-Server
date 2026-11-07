@@ -19,6 +19,16 @@ std::optional<std::uint32_t> color(const std::string& value) {
     for (std::size_t i=0;i<value.size()/2;++i) { const int a=digit(value[2*i]),b=digit(value[2*i+1]); if(a<0||b<0)return {}; result |= std::uint32_t(a*16+b) << (8*i); }
     return result;
 }
+std::optional<double> character_number(sqlite3_stmt* statement,int type_column,int value_column,
+                                       std::string_view field,double minimum,double maximum) {
+    if(sqlite3_column_type(statement,type_column)==SQLITE_NULL)return {};
+    const auto type=text(statement,type_column);
+    if(type!="integer"&&type!="real")throw std::runtime_error("Character definition field must be numeric: "+std::string(field));
+    const auto value=sqlite3_column_double(statement,value_column);
+    if(!std::isfinite(value)||value<minimum||value>maximum)
+        throw std::runtime_error("Character definition field outside supported range: "+std::string(field));
+    return value;
+}
 std::optional<std::vector<std::array<double,3>>> hull_vertices(const std::filesystem::path& root,const std::string& asset_path,bool allow_rounded_degenerate,bool& degenerate) {
     constexpr std::string_view game="$GAME_DATA/",survival="$SURVIVAL_DATA/";
     std::filesystem::path base;std::string_view tail;
@@ -124,7 +134,13 @@ AssetDefinitions AssetDefinitions::load(const std::filesystem::path& root) {
             if(!file)throw std::runtime_error("Cannot read Character definitions");
             std::string source{std::istreambuf_iterator<char>(file),std::istreambuf_iterator<char>()};
             sqlite3_stmt* statement=nullptr;
-            const char* query="SELECT json_extract(value,'$.uuid'),json_type(value,'$.paint.enable'),json_extract(value,'$.paint.enable'),json_extract(value,'$.paint.defaultColor') FROM json_each(?1,'$.characters')";
+            const char* query="SELECT json_extract(value,'$.uuid'),json_type(value,'$.paint.enable'),json_extract(value,'$.paint.enable'),json_extract(value,'$.paint.defaultColor'),"
+                "json_type(value,'$.capsule.radius'),json_extract(value,'$.capsule.radius'),json_type(value,'$.capsule.height'),json_extract(value,'$.capsule.height'),"
+                "json_type(value,'$.capsule.crouchHeight'),json_extract(value,'$.capsule.crouchHeight'),"
+                "json_type(value,'$.movement.moveSpeed'),json_extract(value,'$.movement.moveSpeed'),json_type(value,'$.movement.sprintSpeed'),json_extract(value,'$.movement.sprintSpeed'),"
+                "json_type(value,'$.movement.crouchSpeed'),json_extract(value,'$.movement.crouchSpeed'),json_type(value,'$.movement.slowDownSpeed'),json_extract(value,'$.movement.slowDownSpeed'),"
+                "json_type(value,'$.movement.jumpImpulse'),json_extract(value,'$.movement.jumpImpulse'),json_type(value,'$.movement.canSwim'),json_extract(value,'$.movement.canSwim') "
+                "FROM json_each(?1,'$.characters')";
             const auto prepared=sqlite3_prepare_v2(db.get(),query,-1,&statement,nullptr);
             std::unique_ptr<sqlite3_stmt,decltype(&sqlite3_finalize)> s(statement,sqlite3_finalize);
             if(prepared!=SQLITE_OK)throw std::runtime_error("SQLite JSON reader is unavailable");
@@ -139,6 +155,21 @@ AssetDefinitions AssetDefinitions::load(const std::filesystem::path& root) {
                     character.paint_enabled=sqlite3_column_int(s.get(),2)!=0;
                 }
                 character.default_paint_color_rgba=color(text(s.get(),3));
+                character.capsule_radius=character_number(s.get(),4,5,"capsule.radius",0.05,10.0);
+                character.capsule_height=character_number(s.get(),6,7,"capsule.height",0.1,20.0);
+                character.crouch_height=character_number(s.get(),8,9,"capsule.crouchHeight",0.1,20.0);
+                character.move_speed=character_number(s.get(),10,11,"movement.moveSpeed",0.0,100.0);
+                character.sprint_speed=character_number(s.get(),12,13,"movement.sprintSpeed",0.0,100.0);
+                character.crouch_speed=character_number(s.get(),14,15,"movement.crouchSpeed",0.0,100.0);
+                character.slow_down_speed=character_number(s.get(),16,17,"movement.slowDownSpeed",0.0,100.0);
+                character.jump_impulse=character_number(s.get(),18,19,"movement.jumpImpulse",0.0,100.0);
+                if(sqlite3_column_type(s.get(),20)!=SQLITE_NULL) {
+                    const auto type=text(s.get(),20);
+                    if(type!="true"&&type!="false")throw std::runtime_error("Character definition field must be boolean: movement.canSwim");
+                    character.can_swim=sqlite3_column_int(s.get(),21)!=0;
+                }
+                if(character.capsule_radius&&character.capsule_height&&*character.capsule_height<2.0*(*character.capsule_radius))
+                    throw std::runtime_error("Character capsule height is smaller than its diameter");
                 result.characters_.insert_or_assign(character.uuid,std::move(character));
             }
             if(status!=SQLITE_DONE)throw std::runtime_error("Invalid Character definition JSON: "+std::string(sqlite3_errmsg(db.get())));

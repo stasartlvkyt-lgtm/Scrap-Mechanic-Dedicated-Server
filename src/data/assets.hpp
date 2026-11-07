@@ -34,6 +34,9 @@ struct CharacterAssetDefinition {
     std::string uuid;
     std::optional<bool> paint_enabled;
     std::optional<std::uint32_t> default_paint_color_rgba;
+    std::optional<double> capsule_radius, capsule_height, crouch_height;
+    std::optional<double> move_speed, sprint_speed, crouch_speed, slow_down_speed, jump_impulse;
+    std::optional<bool> can_swim;
 };
 class AssetDefinitions {
 public:

@@ -61,6 +61,18 @@ struct CharacterMotionState {
     std::uint32_t client_tick{};
     bool initialized{},has_client_tick{},grounded{};
 };
+struct CharacterPhysicsProfile {
+    double capsule_radius{0.3};
+    double capsule_height{1.4};
+    double crouch_height{0.8};
+    double move_speed{1.4575};
+    double sprint_speed{4.0};
+    double crouch_speed{3.0};
+    double slow_down_speed{2.5};
+    double jump_impulse{7.0};
+    double maximum_horizontal_speed{6.0};
+    bool swim_supported{};
+};
 struct CharacterCapsuleResult {
     Vec3 position{};
     std::uint32_t contacts{};
@@ -513,6 +525,24 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
         for(const auto& packet:replay->post)if((spawn_template=find_replay_spawn(packet)))break;
         if(!spawn_template)throw std::runtime_error("Native players require a Character spawn in replay post packets");
     }
+    CharacterPhysicsProfile character_profile;
+    if(native_players&&native_assets) {
+        if(const auto* definition=native_assets->find_character(net::format_character_asset_uuid(spawn_template->asset_uuid_memory))) {
+            if(definition->capsule_radius)character_profile.capsule_radius=*definition->capsule_radius;
+            if(definition->capsule_height)character_profile.capsule_height=*definition->capsule_height;
+            if(definition->crouch_height)character_profile.crouch_height=*definition->crouch_height;
+            if(definition->move_speed)character_profile.move_speed=*definition->move_speed;
+            if(definition->sprint_speed)character_profile.sprint_speed=*definition->sprint_speed;
+            if(definition->crouch_speed)character_profile.crouch_speed=*definition->crouch_speed;
+            if(definition->slow_down_speed)character_profile.slow_down_speed=*definition->slow_down_speed;
+            if(definition->jump_impulse)character_profile.jump_impulse=*definition->jump_impulse;
+            character_profile.swim_supported=definition->can_swim.value_or(false);
+            character_profile.maximum_horizontal_speed=std::max({character_profile.move_speed,character_profile.sprint_speed,character_profile.crouch_speed});
+        }
+        if(!std::isfinite(character_profile.maximum_horizontal_speed)||character_profile.maximum_horizontal_speed<=0||
+           character_profile.capsule_height<2*character_profile.capsule_radius)
+            throw std::runtime_error("invalid-player-character-physics-profile");
+    }
     using CollisionRegionKey=std::tuple<std::uint16_t,std::int64_t,std::int64_t>;
     std::set<CollisionRegionKey> active_collision_regions;
     auto collision_anchors=[&] {
@@ -558,12 +588,13 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
         return true;
     };
     auto move_character_capsule=[&](std::uint16_t world,Vec3 start,Vec3 displacement) {
+        const auto cylinder_height=character_profile.capsule_height-2*character_profile.capsule_radius;
         if(physics) {
-            const auto moved=physics->move_character_capsule(world,start,displacement,0.3,0.8);
+            const auto moved=physics->move_character_capsule(world,start,displacement,character_profile.capsule_radius,cylinder_height);
             return CharacterCapsuleResult{moved.position,moved.contacts};
         }
         if(character_collision) {
-            const auto moved=character_collision->move_capsule(world,start,displacement,0.3,0.8);
+            const auto moved=character_collision->move_capsule(world,start,displacement,character_profile.capsule_radius,cylinder_height);
             return CharacterCapsuleResult{moved.position,static_cast<std::uint32_t>(moved.contacts.size())};
         }
         return CharacterCapsuleResult{{start.x+displacement.x,start.y+displacement.y,start.z+displacement.z},0};
@@ -641,7 +672,7 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
             (void)net::rebuild_live_initial_world(*native_initial_template,*native_world,server_tick,*native_catalog);
     }
     net.auth(net.sockets,&authentication);save(false);
-    write_file(directory/L"ready.json","{\"steam_id\":"+json_quote(std::to_string(session.id))+",\"virtual_port\":0,\"seconds\":"+std::to_string(seconds)+",\"run_mode\":"+json_quote(seconds==0?"until-stop-request":"timed")+",\"stop_file\":"+json_quote(path_utf8(directory/L"stop.request"))+",\"allowed_peer\":"+json_quote(std::to_string(allow_peer))+",\"allowed_peer2\":"+json_quote(std::to_string(allow_peer2))+",\"public_server\":"+(public_server?"true":"false")+",\"advertising\":"+(session.advertising?"true":"false")+",\"native_players\":"+(native_players?"true":"false")+",\"native_physics\":"+(physics?"true":"false")+",\"handshake\":"+(handshake?"true":"false")+",\"game_ready\":"+(game_ready?"true":"false")+",\"replay\":"+(replay?"true":"false")+'}');
+    write_file(directory/L"ready.json","{\"steam_id\":"+json_quote(std::to_string(session.id))+",\"virtual_port\":0,\"seconds\":"+std::to_string(seconds)+",\"run_mode\":"+json_quote(seconds==0?"until-stop-request":"timed")+",\"stop_file\":"+json_quote(path_utf8(directory/L"stop.request"))+",\"allowed_peer\":"+json_quote(std::to_string(allow_peer))+",\"allowed_peer2\":"+json_quote(std::to_string(allow_peer2))+",\"public_server\":"+(public_server?"true":"false")+",\"advertising\":"+(session.advertising?"true":"false")+",\"native_players\":"+(native_players?"true":"false")+",\"native_physics\":"+(physics?"true":"false")+",\"character_capsule_radius\":"+std::to_string(character_profile.capsule_radius)+",\"character_capsule_height\":"+std::to_string(character_profile.capsule_height)+",\"character_crouch_height\":"+std::to_string(character_profile.crouch_height)+",\"character_max_horizontal_speed\":"+std::to_string(character_profile.maximum_horizontal_speed)+",\"character_slow_down_speed\":"+std::to_string(character_profile.slow_down_speed)+",\"character_jump_impulse\":"+std::to_string(character_profile.jump_impulse)+",\"character_can_swim\":"+(character_profile.swim_supported?"true":"false")+",\"handshake\":"+(handshake?"true":"false")+",\"game_ready\":"+(game_ready?"true":"false")+",\"replay\":"+(replay?"true":"false")+'}');
     auto native_packet=[&](const std::vector<std::uint8_t>& packet,auto&& recurse)->std::vector<std::uint8_t> {
         if(!native_world||packet.empty())return packet;
         if(packet.front()==29) {
@@ -847,15 +878,15 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                             }
                             if(prepared){live_players.emplace(message->connection,std::move(*prepared));prepared.reset();offline_players.erase(message->peer.steam_id());}
                             if(info.inventory_kind&&!inventory_result.empty()) {
-                                const bool started=inventory.begin(message->connection,message->peer.steam_id(),inventory_result);
-                                if(started&&native_players)pending_inventory_results.insert_or_assign(message->connection,std::move(inventory_result));
-                                if(game_events.size()<10000)game_events.push_back("{\"kind\":\"inventory-validation-start\",\"connection\":"+std::to_string(message->connection)+",\"started\":"+(started?"true":"false")+'}');
+                                const bool inventory_started=inventory.begin(message->connection,message->peer.steam_id(),inventory_result);
+                                if(inventory_started&&native_players)pending_inventory_results.insert_or_assign(message->connection,std::move(inventory_result));
+                                if(game_events.size()<10000)game_events.push_back("{\"kind\":\"inventory-validation-start\",\"connection\":"+std::to_string(message->connection)+",\"started\":"+(inventory_started?"true":"false")+'}');
                             }
                             player_infos.insert_or_assign(message->connection,std::move(info));
                             game_started.insert(message->connection);
                             if(replay){
-                                const auto count=std::min<std::size_t>(replay->post.size(),24);
-                                for(std::size_t i=0;i<count;++i)if(!send_replay(message->connection,replay->post[i],"post-bootstrap")&&native_players){pending_close.insert(message->connection);desynchronized.insert(message->connection);break;}
+                                const auto post_count=std::min<std::size_t>(replay->post.size(),24);
+                                for(std::size_t post_index=0;post_index<post_count;++post_index)if(!send_replay(message->connection,replay->post[post_index],"post-bootstrap")&&native_players){pending_close.insert(message->connection);desynchronized.insert(message->connection);break;}
                             }
                             if(native_players&&!pending_close.contains(message->connection)) {
                                 auto send_spawn=[&](Handle peer,Handle subject,const PlayerSpawnPackets& spawn) {
@@ -1046,12 +1077,12 @@ std::string run_steam_listener(const std::filesystem::path& game,const std::file
                                         double dy=double(requested_position[1])-start.y;
                                         if(!violation.empty())dx=dy=0;
                                         if(dt>0) {
-                                            const double distance=std::hypot(dx,dy),maximum=6.0*dt;
+                                            const double distance=std::hypot(dx,dy),maximum=character_profile.maximum_horizontal_speed*dt;
                                             if(distance>maximum&&distance>0){dx*=maximum/distance;dy*=maximum/distance;}
                                         } else dx=dy=0;
                                         const bool grounded=motion.grounded||character_is_grounded(world_id,start);
                                         const bool jumping=grounded&&update.state_type==3&&requested_velocity[2]>4.0f&&dt>0;
-                                        const double initial_vz=grounded?(jumping?7.0:0.0):std::clamp(motion.velocity.z,-50.0,50.0);
+                                        const double initial_vz=grounded?(jumping?character_profile.jump_impulse:0.0):std::clamp(motion.velocity.z,-50.0,50.0);
                                         constexpr double gravity=9.81;
                                         const double dz=initial_vz*dt-0.5*gravity*dt*dt;
                                         double next_vz=std::clamp(initial_vz-gravity*dt,-50.0,50.0);
